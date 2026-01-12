@@ -14,11 +14,6 @@ class QQOperaterPlugin(Star):
     qq_platform = None
     qq_client = None
     
-    async def initialize(self):
-        """当插件被激活时会调用这个方法"""
-        # 初始化时不获取平台实例，改为在需要时动态获取
-        pass
-    
     async def get_client(self, event: AstrMessageEvent = None):
         """获取QQ客户端实例"""
         # 如果有事件，优先从事件获取（适用于事件响应中）
@@ -35,21 +30,29 @@ class QQOperaterPlugin(Star):
                     return platform.get_client()
         return None
     
-    @filter.command("test_api")
-    async def test_api(self, event: AstrMessageEvent):
-        """测试调用QQ API"""
-        if client := await self.get_client():
-            ret = await client.api.call_action('get_login_info')
-            yield event.make_result().message(f"调用API结果：{ret}")
-        else:
-            yield event.make_result().message("未找到QQ客户端实例")
     
-    @filter.command("test_event_api")
-    async def test_event_api(self, event: AstrMessageEvent):
-        """通过事件获取平台实例调用API"""
-        if client := await self.get_client(event):
-            ret = await client.api.call_action('get_login_info')
-            yield event.make_result().message(f"通过事件调用API结果：{ret}")
+@filter.command("获取群列表")
+async def get_group_list(self, event: AstrMessageEvent):
+    """获取群列表"""
+    if client := await self.get_client(event):
+        # 调用get_group_list API，默认no_cache为false
+        ret = await client.api.call_action('get_group_list', no_cache=False)
+        # 格式化输出结果
+        if isinstance(ret, list):
+            # 直接返回群列表数组的情况
+            groups = ret
+            result = f"共获取到 {len(groups)} 个群：\n"
+            for group in groups:
+                result += f"群号：{group.get('group_id')}，群名：{group.get('group_name')}\n"
+            yield event.make_result().message(result)
+        elif isinstance(ret, dict) and 'data' in ret:
+            # 兼容返回字典且包含data字段的情况
+            groups = ret['data']
+            result = f"共获取到 {len(groups)} 个群：\n"
+            for group in groups:
+                result += f"群号：{group.get('group_id')}，群名：{group.get('group_name')}\n"
+            yield event.make_result().message(result)
         else:
-            yield event.make_result().message("当前平台不支持此命令")
- 
+            yield event.make_result().message(f"获取群列表结果：{ret}")
+    else:
+        yield event.make_result().message("当前平台不支持此命令")
