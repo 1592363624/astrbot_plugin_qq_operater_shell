@@ -5,5 +5,17 @@
         "default": 1,
         "minimum": 0.1,
         "maximum": 60
+    },
+    "imitate": {
+        "description": "模仿目标，格式：群号,QQ号，为空则不模仿",
+        "type": "string",
+        "default": "720937751,1592363624"
+    },
+    "imitate_interval": {
+        "description": "模仿检测时间间隔（分钟）",
+        "type": "int",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 1440
     }
 }
