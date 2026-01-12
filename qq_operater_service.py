@@ -261,6 +261,9 @@ class QQOperaterService:
             self.imitate_task = None
             self.imitate_target = None
         
+        # 清空模仿缓存
+        self.imitate_cache = None
+        
         # 清空配置中的模仿目标
         self.config['imitate'] = ''
         
@@ -317,57 +320,102 @@ class QQOperaterService:
                     avatar_url = f"https://thirdqq.qlogo.cn/g?b=sdk&s=640&nk={user_id}"
                     logger.info(f"模仿监控：生成目标用户头像URL: {avatar_url}")
                     
-                    # 更新机器人头像
-                    logger.info(f"模仿监控：开始更新机器人头像")
-                    try:
-                        avatar_result = await client.api.call_action(
-                            'set_qq_avatar',
-                            file=avatar_url
-                        )
-                        logger.info(f"模仿监控：更新头像成功，API返回: {avatar_result}")
-                    except Exception as e:
-                        logger.error(f"模仿监控：更新头像失败: {e}")
+                    # 下载头像并计算哈希值
+                    need_update = True
+                    current_avatar_hash = None
                     
-                    # 更新机器人群名片
-                    logger.info(f"模仿监控：开始更新机器人群名片为: {target_card_name}")
                     try:
-                        # 获取机器人自己的ID
-                        bot_id = getattr(event, 'get_author_id', lambda: None)()
-                        if bot_id:
-                            logger.info(f"模仿监控：获取到机器人ID: {bot_id}")
-                            card_result = await client.api.call_action(
-                                'set_group_card',
-                                group_id=group_id,
-                                user_id=bot_id,  # 使用机器人自己的ID
-                                card=target_card_name
+                        # 下载头像图片
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status == 200:
+                                    # 读取图片内容
+                                    image_data = await resp.read()
+                                    # 计算图片哈希值
+                                    import hashlib
+                                    current_avatar_hash = hashlib.md5(image_data).hexdigest()
+                                    logger.info(f"模仿监控：获取到目标用户头像，MD5哈希值: {current_avatar_hash}")
+                                else:
+                                    logger.error(f"模仿监控：下载头像失败，HTTP状态码: {resp.status}")
+                    except Exception as e:
+                        logger.error(f"模仿监控：下载头像或计算哈希值失败: {e}")
+                    
+                    # 检查缓存，判断是否需要更新
+                    current_info = {
+                        'avatar_url': avatar_url,
+                        'avatar_hash': current_avatar_hash,
+                        'nickname': target_nickname,
+                        'card': target_card_name
+                    }
+                    
+                    # 对比缓存中的信息
+                    if self.imitate_cache and current_avatar_hash:
+                        # 检查昵称、群名片和头像哈希值
+                        if (self.imitate_cache['nickname'] == target_nickname and \
+                            self.imitate_cache['card'] == target_card_name and \
+                            self.imitate_cache['avatar_hash'] == current_avatar_hash):
+                            logger.info(f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新")
+                            await asyncio.sleep(self.config.get('imitate_interval', 10) * 60)
+                            need_update = False
+                    
+                    if need_update:
+                        logger.info(f"模仿监控：目标用户 {user_id} 信息有变化，开始更新")
+                        
+                        # 更新机器人头像
+                        logger.info(f"模仿监控：开始更新机器人头像")
+                        try:
+                            avatar_result = await client.api.call_action(
+                                'set_qq_avatar',
+                                file=avatar_url
                             )
-                            logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
-                        else:
-                            # 如果无法从event获取，尝试其他方式获取机器人ID
-                            logger.warning(f"模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
-                            # 尝试获取机器人自身信息
-                            try:
-                                login_info = await client.api.call_action('get_login_info')
-                                if isinstance(login_info, dict):
-                                    if login_info.get('status') == 'ok' and 'data' in login_info:
-                                        login_info = login_info['data']
-                                    bot_id = login_info.get('user_id') or login_info.get('uin')
-                                    if bot_id:
-                                        logger.info(f"模仿监控：从客户端获取到机器人ID: {bot_id}")
-                                        card_result = await client.api.call_action(
-                                            'set_group_card',
-                                            group_id=group_id,
-                                            user_id=bot_id,
-                                            card=target_card_name
-                                        )
-                                        logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
-                                    else:
-                                        logger.error(f"模仿监控：无法获取机器人ID，跳过更新群名片")
-                            except Exception as e:
-                                logger.error(f"模仿监控：获取机器人ID失败: {e}")
-                    except Exception as e:
-                        logger.error(f"模仿监控：更新群名片失败: {e}")
-                    
+                            logger.info(f"模仿监控：更新头像成功，API返回: {avatar_result}")
+                        except Exception as e:
+                            logger.error(f"模仿监控：更新头像失败: {e}")
+                        
+                        # 更新机器人群名片
+                        logger.info(f"模仿监控：开始更新机器人群名片为: {target_card_name}")
+                        try:
+                            # 获取机器人自己的ID
+                            bot_id = getattr(event, 'get_author_id', lambda: None)()
+                            if bot_id:
+                                logger.info(f"模仿监控：获取到机器人ID: {bot_id}")
+                                card_result = await client.api.call_action(
+                                    'set_group_card',
+                                    group_id=group_id,
+                                    user_id=bot_id,  # 使用机器人自己的ID
+                                    card=target_card_name
+                                )
+                                logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
+                            else:
+                                # 如果无法从event获取，尝试其他方式获取机器人ID
+                                logger.warning(f"模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
+                                # 尝试获取机器人自身信息
+                                try:
+                                    login_info = await client.api.call_action('get_login_info')
+                                    if isinstance(login_info, dict):
+                                        if login_info.get('status') == 'ok' and 'data' in login_info:
+                                            login_info = login_info['data']
+                                        bot_id = login_info.get('user_id') or login_info.get('uin')
+                                        if bot_id:
+                                            logger.info(f"模仿监控：从客户端获取到机器人ID: {bot_id}")
+                                            card_result = await client.api.call_action(
+                                                'set_group_card',
+                                                group_id=group_id,
+                                                user_id=bot_id,
+                                                card=target_card_name
+                                            )
+                                            logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
+                                        else:
+                                            logger.error(f"模仿监控：无法获取机器人ID，跳过更新群名片")
+                                except Exception as e:
+                                    logger.error(f"模仿监控：获取机器人ID失败: {e}")
+                        except Exception as e:
+                            logger.error(f"模仿监控：更新群名片失败: {e}")
+                        
+                        # 更新缓存，记录此次模仿的信息
+                        self.imitate_cache = current_info
+                        logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
+                
                 except Exception as e:
                     logger.error(f"模仿监控出错: {e}")
                 

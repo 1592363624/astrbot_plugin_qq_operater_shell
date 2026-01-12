@@ -24,6 +24,7 @@ class QQOperaterPlugin(Star):
         # 模仿功能相关变量
         self.imitate_task = None  # 存储模仿任务
         self.imitate_target = None  # 存储目标用户信息 {group_id, user_id}
+        self.imitate_cache = None  # 存储上一次模仿的信息，用于对比 {avatar_url, nickname, card}
     
     async def initialize(self):
         """插件初始化完成后调用"""
