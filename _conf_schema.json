@@ -1,0 +1,9 @@
+{
+    "send_interval": {
+        "description": "消息发送间隔（秒）",
+        "type": "int",
+        "default": 1,
+        "minimum": 0.1,
+        "maximum": 60
+    }
+}
