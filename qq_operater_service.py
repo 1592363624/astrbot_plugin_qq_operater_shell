@@ -11,6 +11,7 @@ QQ操作服务模块
 import asyncio
 import aiohttp
 import hashlib
+import re
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
@@ -349,6 +350,239 @@ class QQOperaterService:
         await QQOperaterService._stop_current_imitate(plugin)
         
         yield event.make_result().message("已停止模仿，并清空了配置中的模仿目标")
+    
+    @staticmethod
+    async def handle_update_avatar(plugin, event: AstrMessageEvent):
+        """处理更新头像命令的逻辑
+        
+        使用示例：
+        /更新头像
+        （然后发送头像图片）
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 定义会话处理函数
+        async def update_avatar_waiter(controller: SessionController, confirm_event: AstrMessageEvent):
+            # 添加日志，记录收到的消息
+            logger.info(f"收到更新头像的回复消息: {confirm_event.message_str}")
+            logger.info(f"消息组件数量: {len(confirm_event.get_messages())}")
+            
+            # 检查用户回复是否包含图片
+            from astrbot.core.message.components import Image
+            image_component = None
+            for component in confirm_event.get_messages():
+                logger.info(f"消息组件类型: {type(component).__name__}")
+                if isinstance(component, Image):
+                    image_component = component
+                    logger.info(f"找到图片组件: {component.__dict__}")
+                    break
+            
+            if image_component:
+                # 获取客户端
+                client = await QQOperaterService.get_client(plugin, confirm_event)
+                if not client:
+                    await confirm_event.send(confirm_event.make_result().message("当前平台不支持此命令"))
+                    controller.stop()
+                    return
+                
+                try:
+                    # 获取图片属性
+                    image_file = getattr(image_component, 'file', None)
+                    image_url = getattr(image_component, 'url', None)
+                    logger.info(f"图片file属性: {image_file}")
+                    logger.info(f"图片url属性: {image_url}")
+                    
+                    # 清理URL，移除所有反引号和空格
+                    if isinstance(image_url, str):
+                        # 移除所有反引号
+                        image_url = image_url.replace('`', '')
+                        # 移除前后空格
+                        image_url = image_url.strip()
+                        logger.info(f"清理后的图片url属性: {image_url}")
+                    
+                    # 调用set_qq_avatar API，尝试不同的图片属性
+                    success = False
+                    error_msg = ""
+                    
+                    # 尝试1: 使用清理后的url属性（优先）
+                    try:
+                        if image_url:
+                            logger.info(f"尝试使用url属性更新头像: {image_url}")
+                            result = await client.api.call_action(
+                                'set_qq_avatar',
+                                file=image_url
+                            )
+                            await confirm_event.send(confirm_event.make_result().message(f"更新头像成功，API返回: {result}"))
+                            success = True
+                            controller.stop()  # 成功后停止会话
+                            return
+                    except Exception as e:
+                        error_msg = f"url方式失败: {str(e)}"
+                        logger.error(error_msg)
+                    
+                    # 尝试2: 使用file属性
+                    if not success and image_file:
+                        try:
+                            logger.info(f"尝试使用file属性更新头像: {image_file}")
+                            result = await client.api.call_action(
+                                'set_qq_avatar',
+                                file=image_file
+                            )
+                            await confirm_event.send(confirm_event.make_result().message(f"更新头像成功，API返回: {result}"))
+                            success = True
+                            controller.stop()  # 成功后停止会话
+                            return
+                        except Exception as e:
+                            error_msg += f", file方式失败: {str(e)}"
+                            logger.error(f"file方式失败: {str(e)}")
+                    
+                    # 尝试3: 从原始消息提取CQ码
+                    if not success:
+                        try:
+                            # 从原始消息中提取图片URL
+                            raw_message = getattr(confirm_event, 'raw_message', None)
+                            if raw_message:
+                                logger.info(f"尝试从原始消息提取CQ码: {raw_message}")
+                                # 匹配CQ码中的图片URL
+                                cq_code_match = re.search(r'\[CQ:image,.*?url=(https?://.*?)\]', str(raw_message))
+                                if cq_code_match:
+                                    image_url = cq_code_match.group(1)
+                                    logger.info(f"提取到CQ码中的URL: {image_url}")
+                                    result = await client.api.call_action(
+                                        'set_qq_avatar',
+                                        file=image_url
+                                    )
+                                    await confirm_event.send(confirm_event.make_result().message(f"更新头像成功，API返回: {result}"))
+                                    success = True
+                                    controller.stop()  # 成功后停止会话
+                                    return
+                        except Exception as e:
+                            error_msg += f", CQ码提取失败: {str(e)}"
+                            logger.error(f"CQ码提取失败: {str(e)}")
+                    
+                    # 如果所有尝试都失败
+                    if not success:
+                        await confirm_event.send(confirm_event.make_result().message(f"更新头像失败，请尝试使用URL方式：/更新头像URL <头像URL>"))
+                        controller.stop()  # 失败后也停止会话，避免无限等待
+                        return
+                except Exception as e:
+                    # 捕获所有异常，确保给用户回复
+                    logger.error(f"更新头像过程中出现异常: {str(e)}")
+                    await confirm_event.send(confirm_event.make_result().message(f"更新头像失败，错误：{str(e)}"))
+                    controller.stop()  # 异常后停止会话
+                    return
+            else:
+                # 用户没有发送图片，提示重新发送
+                await confirm_event.send(confirm_event.make_result().message("未检测到图片，请发送头像图片"))
+                controller.keep(timeout=60, reset_timeout=True)
+        
+        # 发送初始提示消息
+        yield event.make_result().message("请发送头像图片")
+        
+        # 注册会话控制器
+        try:
+            # 具体的会话控制器使用方法
+            @session_waiter(timeout=60, record_history_chains=False) # 注册一个会话控制器，设置超时时间为 60 秒，不记录历史消息链
+            async def waiter(controller: SessionController, confirm_event: AstrMessageEvent):
+                await update_avatar_waiter(controller, confirm_event)
+            
+            await waiter(event)
+        except TimeoutError:
+            yield event.make_result().message("会话超时，已取消更新头像")
+        except Exception as e:
+            logger.error(f"会话处理错误：{str(e)}")
+            yield event.make_result().message(f"会话处理错误：{str(e)}")
+    
+    @staticmethod
+    async def handle_update_avatar_url(plugin, event: AstrMessageEvent):
+        """处理通过URL更新头像命令的逻辑
+        
+        使用示例：
+        /更新头像URL http://example.com/avatar.jpg
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 解析命令参数，获取头像URL
+        cmd_params = event.message_str.split()
+        if len(cmd_params) < 2:
+            yield event.make_result().message("参数不足，请使用：/更新头像URL <头像URL>")
+            return
+        
+        # 提取并清理URL，移除可能的反引号和空格
+        avatar_url = cmd_params[1]
+        if len(cmd_params) > 2:
+            # 如果URL中包含空格，重新拼接
+            avatar_url = ' '.join(cmd_params[1:])
+        
+        # 清理URL
+        avatar_url = avatar_url.strip().strip('`')
+        logger.info(f"收到更新头像URL命令，清理后的URL: {avatar_url}")
+        
+        # 验证URL格式
+        if not (avatar_url.startswith('http://') or avatar_url.startswith('https://')):
+            yield event.make_result().message("URL格式不正确，请输入完整的HTTP或HTTPS URL")
+            return
+        
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if client:
+            try:
+                # 调用set_qq_avatar API
+                result = await client.api.call_action(
+                    'set_qq_avatar',
+                    file=avatar_url
+                )
+                yield event.make_result().message(f"更新头像成功，API返回: {result}")
+            except Exception as e:
+                logger.error(f"更新头像失败: {str(e)}")
+                yield event.make_result().message(f"更新头像失败: {str(e)}")
+        else:
+            yield event.make_result().message("当前平台不支持此命令")
+    
+    @staticmethod
+    async def handle_update_nickname(plugin, event: AstrMessageEvent):
+        """处理更新昵称命令的逻辑
+        
+        使用示例：
+        /更新昵称 新昵称
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 解析命令参数，获取新昵称
+        cmd_params = event.message_str.split(maxsplit=1)
+        if len(cmd_params) < 2:
+            yield event.make_result().message("参数不足，请使用：/更新昵称 <新昵称>")
+            return
+        
+        new_nickname = cmd_params[1].strip()
+        logger.info(f"收到更新昵称命令，新昵称: {new_nickname}")
+        
+        # 验证昵称长度
+        if not new_nickname:
+            yield event.make_result().message("昵称不能为空")
+            return
+        
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if client:
+            try:
+                # 调用set_qq_profile API更新昵称
+                result = await client.api.call_action(
+                    'set_qq_profile',
+                    nickname=new_nickname
+                )
+                yield event.make_result().message(f"更新昵称成功，API返回: {result}")
+            except Exception as e:
+                logger.error(f"更新昵称失败: {str(e)}")
+                yield event.make_result().message(f"更新昵称失败: {str(e)}")
+        else:
+            yield event.make_result().message("当前平台不支持此命令")
     
     @staticmethod
     async def _fetch_target_info(client, group_id, user_id):
