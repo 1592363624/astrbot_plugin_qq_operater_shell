@@ -544,6 +544,47 @@ class QQOperaterService:
             yield event.make_result().message("当前平台不支持此命令")
     
     @staticmethod
+    async def handle_update_nickname(plugin, event: AstrMessageEvent):
+        """处理更新昵称命令的逻辑
+        
+        使用示例：
+        /更新昵称 新昵称
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 解析命令参数，获取新昵称
+        cmd_params = event.message_str.split(maxsplit=1)
+        if len(cmd_params) < 2:
+            yield event.make_result().message("参数不足，请使用：/更新昵称 <新昵称>")
+            return
+        
+        new_nickname = cmd_params[1].strip()
+        logger.info(f"收到更新昵称命令，新昵称: {new_nickname}")
+        
+        # 验证昵称长度
+        if not new_nickname:
+            yield event.make_result().message("昵称不能为空")
+            return
+        
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if client:
+            try:
+                # 调用set_qq_profile API更新昵称
+                result = await client.api.call_action(
+                    'set_qq_profile',
+                    nickname=new_nickname
+                )
+                yield event.make_result().message(f"更新昵称成功，API返回: {result}")
+            except Exception as e:
+                logger.error(f"更新昵称失败: {str(e)}")
+                yield event.make_result().message(f"更新昵称失败: {str(e)}")
+        else:
+            yield event.make_result().message("当前平台不支持此命令")
+    
+    @staticmethod
     async def _fetch_target_info(client, group_id, user_id):
         """获取目标用户信息
         

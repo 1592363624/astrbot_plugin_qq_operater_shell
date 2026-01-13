@@ -6,7 +6,6 @@ QQ操作插件
 
 import asyncio
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.core.star import Star
 from astrbot.api import AstrBotConfig, logger
 from astrbot.core.star.context import Context
@@ -171,4 +170,14 @@ async def update_avatar_url(self, event: AstrMessageEvent):
     /更新头像URL http://example.com/avatar.jpg
     """
     async for result in QQOperaterService.handle_update_avatar_url(self, event):
+        yield result
+
+
+@filter.command("更新昵称")
+async def update_nickname(self, event: AstrMessageEvent):
+    """更新昵称
+    使用示例：
+    /更新昵称 新昵称
+    """
+    async for result in QQOperaterService.handle_update_nickname(self, event):
         yield result
