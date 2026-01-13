@@ -14,6 +14,6 @@
 
 ## 🐔 联系作者
 
-- **反馈**：欢迎在 [GitHub Issues](https://github.com/1592363624/astrbot_plugin_zanwo_shell/issues) 提交问题或建议
+- **反馈**：欢迎在 [GitHub Issues](https://github.com/1592363624/astrbot_plugin_qq_operater_shell/issues) 提交问题或建议
 QQ群:91219736
 telegram:[巅峰阁](https://t.me/ShellDFG)
