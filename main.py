@@ -114,13 +114,14 @@ class QQOperaterPlugin(Star):
             except Exception as e:
                 logger.error(f"启动自动模仿任务失败：未知错误 - {e}")
 
-
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("获取群列表")
 async def get_group_list(self, event: AstrMessageEvent):
     """获取群列表"""
     async for result in QQOperaterService.handle_get_group_list(self, event):
         yield result
     
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("获取群成员信息")
 async def get_group_member_info(self, event: AstrMessageEvent):
     """获取群成员信息
@@ -131,6 +132,7 @@ async def get_group_member_info(self, event: AstrMessageEvent):
         yield result
 
 
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("模仿")
 async def imitate_user(self, event: AstrMessageEvent):
     """模仿指定用户的头像和群名片
@@ -142,6 +144,7 @@ async def imitate_user(self, event: AstrMessageEvent):
         yield result
 
 
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("停止模仿")
 async def stop_imitate(self, event: AstrMessageEvent):
     """停止当前模仿任务
@@ -152,6 +155,7 @@ async def stop_imitate(self, event: AstrMessageEvent):
         yield result
 
 
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("更新头像")
 async def update_avatar(self, event: AstrMessageEvent):
     """更新头像
@@ -163,6 +167,7 @@ async def update_avatar(self, event: AstrMessageEvent):
         yield result
 
 
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("更新头像URL")
 async def update_avatar_url(self, event: AstrMessageEvent):
     """通过URL更新头像
@@ -173,6 +178,7 @@ async def update_avatar_url(self, event: AstrMessageEvent):
         yield result
 
 
+@filter.permission_type(filter.PermissionType.ADMIN)
 @filter.command("更新昵称")
 async def update_nickname(self, event: AstrMessageEvent):
     """更新昵称
