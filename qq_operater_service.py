@@ -10,9 +10,15 @@ QQ操作服务模块
 
 import asyncio
 import aiohttp
+import hashlib
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
+import astrbot.api.message_components as Comp
+from astrbot.core.utils.session_waiter import (
+    session_waiter,
+    SessionController,
+)
 
 
 class QQOperaterService:
@@ -54,11 +60,11 @@ class QQOperaterService:
         return f"❓ {gender}"
     
     @staticmethod
-    async def get_client(self, event: AstrMessageEvent = None):
+    async def get_client(plugin, event: AstrMessageEvent = None):
         """获取QQ客户端实例
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
             
         Returns:
@@ -77,7 +83,7 @@ class QQOperaterService:
                 pass
         
         # 否则动态获取平台实例并返回client
-        for platform in self.context.platform_manager.platform_insts:
+        for platform in plugin.context.platform_manager.platform_insts:
             platform_name = platform.meta().name
             if platform_name in ["aiocqhttp", "qq_official"]:
                 # 如果是aiocqhttp平台，直接获取client，不进行类型检查
@@ -86,14 +92,14 @@ class QQOperaterService:
         return None
     
     @staticmethod
-    async def handle_get_group_list(self, event: AstrMessageEvent):
+    async def handle_get_group_list(plugin, event: AstrMessageEvent):
         """处理获取群列表命令的逻辑
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
         """
-        if client := await QQOperaterService.get_client(self, event):
+        if client := await QQOperaterService.get_client(plugin, event):
             # 调用get_group_list API，默认no_cache为false
             ret = await client.api.call_action('get_group_list', no_cache=False)
             # 格式化输出结果
@@ -117,14 +123,14 @@ class QQOperaterService:
             yield event.make_result().message("当前平台不支持此命令")
     
     @staticmethod
-    async def handle_get_group_member_info(self, event: AstrMessageEvent):
+    async def handle_get_group_member_info(plugin, event: AstrMessageEvent):
         """处理获取群成员信息命令的逻辑
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
         """
-        if client := await QQOperaterService.get_client(self, event):
+        if client := await QQOperaterService.get_client(plugin, event):
             # 解析命令参数，获取group_id和user_id
             cmd_params = event.message_str.split()
             if len(cmd_params) < 3:
@@ -182,22 +188,106 @@ class QQOperaterService:
             yield event.make_result().message("当前平台不支持此命令")
     
     @staticmethod
-    async def handle_imitate_user(self, event: AstrMessageEvent):
+    async def _stop_current_imitate(plugin):
+        """停止当前模仿任务
+        
+        Args:
+            plugin: 插件实例
+        """
+        if plugin.imitate_task:
+            plugin.imitate_task.cancel()
+            plugin.imitate_task = None
+            plugin.imitate_target = None
+        
+        plugin.imitate_cache = None
+        plugin.config['imitate'] = ''
+    
+    @staticmethod
+    async def _start_imitate_target(plugin, event, group_id, user_id):
+        """开始模仿新目标
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+            group_id: 群号
+            user_id: 用户ID
+        """
+        # 保存目标信息到配置，格式：群号,QQ号
+        plugin.config['imitate'] = f"{group_id},{user_id}"
+        
+        # 存储目标信息
+        plugin.imitate_target = {
+            'group_id': group_id,
+            'user_id': user_id
+        }
+        
+        # 创建模仿任务
+        plugin.imitate_task = asyncio.create_task(
+            QQOperaterService._imitate_monitor(plugin, event)
+        )
+    
+    @staticmethod
+    async def _replace_imitate_target(plugin, event, group_id, user_id):
+        """替换模仿目标
+        
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+            group_id: 群号
+            user_id: 用户ID
+        """
+        # 停止当前模仿任务
+        await QQOperaterService._stop_current_imitate(plugin)
+        
+        # 开始模仿新目标
+        await QQOperaterService._start_imitate_target(plugin, event, group_id, user_id)
+        
+        # 发送替换成功消息
+        await event.send(event.make_result().message(f"已成功替换模仿目标，开始模仿用户 {user_id}，每 {plugin.config.get('imitate_interval', 10)} 分钟更新一次"))
+    
+    @staticmethod
+    async def handle_imitate_user(plugin, event: AstrMessageEvent):
         """处理模仿用户命令的逻辑
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
         """
-        # 检查配置中是否指定了模仿目标
-        config_imitate_target = self.config.get('imitate', '')
-        if config_imitate_target:
-            yield event.make_result().message(f"配置中已指定模仿目标用户 {config_imitate_target}，请先清空配置或使用停止模仿命令")
-            return
+        # 检查配置中是否指定了模仿目标或已在模仿其他用户
+        has_existing_target = False
+        existing_target_info = ""
         
-        # 检查是否已在模仿其他用户
-        if self.imitate_task:
-            yield event.make_result().message("已在模仿其他用户，请先停止当前模仿")
+        config_imitate_target = plugin.config.get('imitate', '')
+        if config_imitate_target:
+            has_existing_target = True
+            existing_target_info = config_imitate_target
+        elif plugin.imitate_task and plugin.imitate_target:
+            has_existing_target = True
+            existing_target_info = f"{plugin.imitate_target['group_id']},{plugin.imitate_target['user_id']}"
+        
+        # 解析新的目标用户ID
+        # 从消息中提取@mention的用户ID
+        new_target_user_id = None
+        
+        # 尝试从消息链中提取@mention
+        from astrbot.core.message.components import At
+        for component in event.get_messages():
+            if isinstance(component, At) and component.qq != "all":
+                new_target_user_id = component.qq
+                break
+        
+        # 如果没有@mention，尝试从命令参数中提取
+        if not new_target_user_id:
+            cmd_params = event.message_str.split()
+            if len(cmd_params) >= 2:
+                # 尝试解析参数为用户ID
+                try:
+                    new_target_user_id = int(cmd_params[1])
+                except ValueError:
+                    pass
+        
+        if not new_target_user_id:
+            yield event.make_result().message("请@需要模仿的用户，或在命令后跟上用户ID")
             return
         
         # 获取群ID
@@ -206,221 +296,306 @@ class QQOperaterService:
             yield event.make_result().message("请在群聊中使用此命令")
             return
         
-        # 解析命令，获取目标用户ID
-        # 从消息中提取@mention的用户ID
-        target_user_id = None
-        
-        # 尝试从消息链中提取@mention
-        from astrbot.core.message.components import At
-        for component in event.get_messages():
-            if isinstance(component, At) and component.qq != "all":
-                target_user_id = component.qq
-                break
-        
-        # 如果没有@mention，尝试从命令参数中提取
-        if not target_user_id:
-            cmd_params = event.message_str.split()
-            if len(cmd_params) >= 2:
-                # 尝试解析参数为用户ID
+        # 如果已有模仿目标，询问用户是否替换
+        if has_existing_target:
+            try:
+                yield event.make_result().message(f"当前已存在模仿目标用户 {existing_target_info}，是否替换为新目标？(是/否)")
+                
+                # 定义会话处理函数
+                @session_waiter(timeout=60, record_history_chains=False)
+                async def imitate_confirm_waiter(controller: SessionController, confirm_event: AstrMessageEvent):
+                    # 检查用户回复
+                    user_reply = confirm_event.message_str.strip()
+                    
+                    if user_reply in ["是", "是的", "Y", "y", "YES", "yes"]:
+                        # 用户确认替换，执行替换逻辑
+                        await QQOperaterService._replace_imitate_target(
+                            plugin, confirm_event, group_id, new_target_user_id
+                        )
+                        controller.stop()
+                    elif user_reply in ["否", "不是", "N", "n", "NO", "no"]:
+                        # 用户取消替换
+                        await confirm_event.send(confirm_event.make_result().message("已取消替换模仿目标"))
+                        controller.stop()
+                    else:
+                        # 用户回复无效，提示重新输入
+                        await confirm_event.send(confirm_event.make_result().message("请回复'是'或'否'"))
+                        controller.keep(timeout=60, reset_timeout=True)
+                
                 try:
-                    target_user_id = int(cmd_params[1])
-                except ValueError:
-                    pass
-        
-        if not target_user_id:
-            yield event.make_result().message("请@需要模仿的用户，或在命令后跟上用户ID")
-            return
-        
-        # 保存目标信息到配置，格式：群号,QQ号
-        self.config['imitate'] = f"{group_id},{target_user_id}"
-        
-        # 存储目标信息
-        self.imitate_target = {
-            'group_id': group_id,
-            'user_id': target_user_id
-        }
-        
-        # 创建模仿任务
-        self.imitate_task = asyncio.create_task(
-            QQOperaterService._imitate_monitor(self, event)
-        )
-        
-        yield event.make_result().message(f"开始模仿用户 {target_user_id}，每 {self.config.get('imitate_interval', 10)} 分钟更新一次")
+                    await imitate_confirm_waiter(event)
+                except TimeoutError:
+                    yield event.make_result().message("会话超时，已取消替换")
+                except Exception as e:
+                    yield event.make_result().message(f"会话处理错误：{str(e)}")
+            except Exception as e:
+                yield event.make_result().message(f"处理模仿命令失败：{str(e)}")
+        else:
+            # 没有现有模仿目标，直接开始模仿
+            await QQOperaterService._start_imitate_target(
+                plugin, event, group_id, new_target_user_id
+            )
+            yield event.make_result().message(f"开始模仿用户 {new_target_user_id}，每 {plugin.config.get('imitate_interval', 10)} 分钟更新一次")
     
     @staticmethod
-    async def handle_stop_imitate(self, event: AstrMessageEvent):
+    async def handle_stop_imitate(plugin, event: AstrMessageEvent):
         """处理停止模仿命令的逻辑
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
         """
         # 取消任务
-        if self.imitate_task:
-            self.imitate_task.cancel()
-            self.imitate_task = None
-            self.imitate_target = None
+        if plugin.imitate_task:
+            plugin.imitate_task.cancel()
+            plugin.imitate_task = None
+            plugin.imitate_target = None
         
         # 清空模仿缓存
-        self.imitate_cache = None
+        plugin.imitate_cache = None
         
         # 清空配置中的模仿目标
-        self.config['imitate'] = ''
+        plugin.config['imitate'] = ''
         
         yield event.make_result().message("已停止模仿，并清空了配置中的模仿目标")
     
     @staticmethod
-    async def _imitate_monitor(self, event: AstrMessageEvent):
+    async def _fetch_target_info(client, group_id, user_id):
+        """获取目标用户信息
+        
+        Args:
+            client: QQ客户端实例
+            group_id: 群号
+            user_id: 用户ID
+            
+        Returns:
+            tuple: (target_nickname, target_card_name, avatar_url) 或 (None, None, None) if failed
+        """
+        try:
+            member_info = await client.api.call_action(
+                'get_group_member_info',
+                group_id=group_id,
+                user_id=user_id,
+                no_cache=True
+            )
+            
+            # 处理API返回格式
+            if isinstance(member_info, dict):
+                if member_info.get('status') == 'ok' and 'data' in member_info:
+                    member_info = member_info['data']
+            
+            # 获取目标用户的详细信息
+            target_nickname = member_info.get('nickname', '未知')
+            target_card_name = member_info.get('card') or target_nickname
+            
+            # 生成目标用户头像URL
+            avatar_url = f"https://thirdqq.qlogo.cn/g?b=sdk&s=640&nk={user_id}"
+            
+            return target_nickname, target_card_name, avatar_url
+        except Exception as e:
+            logger.error(f"获取目标用户信息失败: {e}")
+            return None, None, None
+    
+    @staticmethod
+    async def _download_avatar(avatar_url):
+        """下载头像并计算哈希值
+        
+        Args:
+            avatar_url: 头像URL
+            
+        Returns:
+            str: 头像哈希值，下载失败返回None
+        """
+        try:
+            # 下载头像图片
+            async with aiohttp.ClientSession() as session:
+                async with session.get(avatar_url) as resp:
+                    if resp.status == 200:
+                        # 读取图片内容
+                        image_data = await resp.read()
+                        # 计算图片哈希值
+                        current_avatar_hash = hashlib.md5(image_data).hexdigest()
+                        logger.info(f"模仿监控：获取到目标用户头像，MD5哈希值: {current_avatar_hash}")
+                        return current_avatar_hash
+                    else:
+                        logger.error(f"模仿监控：下载头像失败，HTTP状态码: {resp.status}")
+                        return None
+        except Exception as e:
+            logger.error(f"模仿监控：下载头像或计算哈希值失败: {e}")
+            return None
+    
+    @staticmethod
+    def _check_need_update(plugin, target_nickname, target_card_name, current_avatar_hash):
+        """检查是否需要更新机器人信息
+        
+        Args:
+            plugin: 插件实例
+            target_nickname: 目标用户昵称
+            target_card_name: 目标用户群名片
+            current_avatar_hash: 当前头像哈希值
+            
+        Returns:
+            bool: 是否需要更新
+        """
+        # 检查缓存，判断是否需要更新
+        if plugin.imitate_cache and current_avatar_hash:
+            # 检查昵称、群名片和头像哈希值
+            if (plugin.imitate_cache['nickname'] == target_nickname and \
+                plugin.imitate_cache['card'] == target_card_name and \
+                plugin.imitate_cache['avatar_hash'] == current_avatar_hash):
+                return False
+        return True
+    
+    @staticmethod
+    async def _update_bot_avatar(client, avatar_url):
+        """更新机器人头像
+        
+        Args:
+            client: QQ客户端实例
+            avatar_url: 头像URL
+        """
+        logger.info(f"模仿监控：开始更新机器人头像")
+        try:
+            avatar_result = await client.api.call_action(
+                'set_qq_avatar',
+                file=avatar_url
+            )
+            logger.info(f"模仿监控：更新头像成功，API返回: {avatar_result}")
+        except Exception as e:
+            logger.error(f"模仿监控：更新头像失败: {e}")
+    
+    @staticmethod
+    async def _get_bot_id(client, event):
+        """获取机器人ID
+        
+        Args:
+            client: QQ客户端实例
+            event: 消息事件对象
+            
+        Returns:
+            str/int: 机器人ID，获取失败返回None
+        """
+        # 尝试从事件获取
+        bot_id = getattr(event, 'get_author_id', lambda: None)()
+        if bot_id:
+            logger.info(f"模仿监控：从事件获取到机器人ID: {bot_id}")
+            return bot_id
+        
+        # 如果无法从event获取，尝试从客户端获取
+        logger.warning(f"模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
+        try:
+            login_info = await client.api.call_action('get_login_info')
+            if isinstance(login_info, dict):
+                if login_info.get('status') == 'ok' and 'data' in login_info:
+                    login_info = login_info['data']
+                bot_id = login_info.get('user_id') or login_info.get('uin')
+                if bot_id:
+                    logger.info(f"模仿监控：从客户端获取到机器人ID: {bot_id}")
+                    return bot_id
+        except Exception as e:
+            logger.error(f"模仿监控：获取机器人ID失败: {e}")
+        
+        logger.error(f"模仿监控：无法获取机器人ID")
+        return None
+    
+    @staticmethod
+    async def _update_bot_card(client, group_id, bot_id, target_card_name):
+        """更新机器人群名片
+        
+        Args:
+            client: QQ客户端实例
+            group_id: 群号
+            bot_id: 机器人ID
+            target_card_name: 目标群名片
+        """
+        logger.info(f"模仿监控：开始更新机器人群名片为: {target_card_name}")
+        try:
+            card_result = await client.api.call_action(
+                'set_group_card',
+                group_id=group_id,
+                user_id=bot_id,
+                card=target_card_name
+            )
+            logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
+        except Exception as e:
+            logger.error(f"模仿监控：更新群名片失败: {e}")
+    
+    @staticmethod
+    async def _imitate_monitor(plugin, event: AstrMessageEvent):
         """模仿监控任务，周期性检测目标用户信息并更新
         
         Args:
-            self: 插件实例
+            plugin: 插件实例
             event: 消息事件对象
         """
         try:
-            client = await QQOperaterService.get_client(self, event)
+            client = await QQOperaterService.get_client(plugin, event)
             if not client:
                 return
             
             while True:
                 # 检查目标信息是否存在
-                if not self.imitate_target:
+                if not plugin.imitate_target:
                     break
                 
-                group_id = self.imitate_target['group_id']
-                user_id = self.imitate_target['user_id']
+                group_id = plugin.imitate_target['group_id']
+                user_id = plugin.imitate_target['user_id']
+                
+                logger.info(f"模仿监控：开始处理目标用户 - 群: {group_id}, 用户ID: {user_id}")
                 
                 # 获取目标用户信息
-                try:
-                    member_info = await client.api.call_action(
-                        'get_group_member_info',
-                        group_id=group_id,
-                        user_id=user_id,
-                        no_cache=True
-                    )
-                    
-                    # 处理API返回格式
-                    if isinstance(member_info, dict):
-                        if member_info.get('status') == 'ok' and 'data' in member_info:
-                            member_info = member_info['data']
-                    
-                    # 获取目标用户的详细信息
-                    target_nickname = member_info.get('nickname', '未知')
-                    target_card_name = member_info.get('card') or target_nickname
-                    
-                    logger.info(f"模仿监控：开始处理目标用户 - 群: {group_id}, 用户ID: {user_id}")
-                    logger.info(f"模仿监控：获取到目标用户信息 - 昵称: {target_nickname}, 群名片: {target_card_name}")
-                    
-                    if not target_card_name:
-                        logger.warning(f"模仿监控：目标用户 {user_id} 没有昵称或群名片，跳过此次更新")
-                        await asyncio.sleep(self.config.get('imitate_interval', 10) * 60)
-                        continue
-                    
-                    # 生成目标用户头像URL
-                    avatar_url = f"https://thirdqq.qlogo.cn/g?b=sdk&s=640&nk={user_id}"
-                    logger.info(f"模仿监控：生成目标用户头像URL: {avatar_url}")
-                    
-                    # 下载头像并计算哈希值
-                    need_update = True
-                    current_avatar_hash = None
-                    
-                    try:
-                        # 下载头像图片
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(avatar_url) as resp:
-                                if resp.status == 200:
-                                    # 读取图片内容
-                                    image_data = await resp.read()
-                                    # 计算图片哈希值
-                                    import hashlib
-                                    current_avatar_hash = hashlib.md5(image_data).hexdigest()
-                                    logger.info(f"模仿监控：获取到目标用户头像，MD5哈希值: {current_avatar_hash}")
-                                else:
-                                    logger.error(f"模仿监控：下载头像失败，HTTP状态码: {resp.status}")
-                    except Exception as e:
-                        logger.error(f"模仿监控：下载头像或计算哈希值失败: {e}")
-                    
-                    # 检查缓存，判断是否需要更新
-                    current_info = {
-                        'avatar_url': avatar_url,
-                        'avatar_hash': current_avatar_hash,
-                        'nickname': target_nickname,
-                        'card': target_card_name
-                    }
-                    
-                    # 对比缓存中的信息
-                    if self.imitate_cache and current_avatar_hash:
-                        # 检查昵称、群名片和头像哈希值
-                        if (self.imitate_cache['nickname'] == target_nickname and \
-                            self.imitate_cache['card'] == target_card_name and \
-                            self.imitate_cache['avatar_hash'] == current_avatar_hash):
-                            logger.info(f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新")
-                            await asyncio.sleep(self.config.get('imitate_interval', 10) * 60)
-                            need_update = False
-                    
-                    if need_update:
-                        logger.info(f"模仿监控：目标用户 {user_id} 信息有变化，开始更新")
-                        
-                        # 更新机器人头像
-                        logger.info(f"模仿监控：开始更新机器人头像")
-                        try:
-                            avatar_result = await client.api.call_action(
-                                'set_qq_avatar',
-                                file=avatar_url
-                            )
-                            logger.info(f"模仿监控：更新头像成功，API返回: {avatar_result}")
-                        except Exception as e:
-                            logger.error(f"模仿监控：更新头像失败: {e}")
-                        
-                        # 更新机器人群名片
-                        logger.info(f"模仿监控：开始更新机器人群名片为: {target_card_name}")
-                        try:
-                            # 获取机器人自己的ID
-                            bot_id = getattr(event, 'get_author_id', lambda: None)()
-                            if bot_id:
-                                logger.info(f"模仿监控：获取到机器人ID: {bot_id}")
-                                card_result = await client.api.call_action(
-                                    'set_group_card',
-                                    group_id=group_id,
-                                    user_id=bot_id,  # 使用机器人自己的ID
-                                    card=target_card_name
-                                )
-                                logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
-                            else:
-                                # 如果无法从event获取，尝试其他方式获取机器人ID
-                                logger.warning(f"模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
-                                # 尝试获取机器人自身信息
-                                try:
-                                    login_info = await client.api.call_action('get_login_info')
-                                    if isinstance(login_info, dict):
-                                        if login_info.get('status') == 'ok' and 'data' in login_info:
-                                            login_info = login_info['data']
-                                        bot_id = login_info.get('user_id') or login_info.get('uin')
-                                        if bot_id:
-                                            logger.info(f"模仿监控：从客户端获取到机器人ID: {bot_id}")
-                                            card_result = await client.api.call_action(
-                                                'set_group_card',
-                                                group_id=group_id,
-                                                user_id=bot_id,
-                                                card=target_card_name
-                                            )
-                                            logger.info(f"模仿监控：更新群名片成功，API返回: {card_result}")
-                                        else:
-                                            logger.error(f"模仿监控：无法获取机器人ID，跳过更新群名片")
-                                except Exception as e:
-                                    logger.error(f"模仿监控：获取机器人ID失败: {e}")
-                        except Exception as e:
-                            logger.error(f"模仿监控：更新群名片失败: {e}")
-                        
-                        # 更新缓存，记录此次模仿的信息
-                        self.imitate_cache = current_info
-                        logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
+                target_nickname, target_card_name, avatar_url = await QQOperaterService._fetch_target_info(
+                    client, group_id, user_id
+                )
                 
-                except Exception as e:
-                    logger.error(f"模仿监控出错: {e}")
+                if not target_card_name:
+                    logger.warning(f"模仿监控：目标用户 {user_id} 没有昵称或群名片，跳过此次更新")
+                    await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                    continue
+                
+                logger.info(f"模仿监控：获取到目标用户信息 - 昵称: {target_nickname}, 群名片: {target_card_name}")
+                logger.info(f"模仿监控：生成目标用户头像URL: {avatar_url}")
+                
+                # 下载头像并计算哈希值
+                current_avatar_hash = await QQOperaterService._download_avatar(avatar_url)
+                
+                # 如果头像下载失败，跳过本次循环，避免后续逻辑混乱
+                if current_avatar_hash is None:
+                    logger.warning(f"模仿监控：目标用户 {user_id} 头像下载失败，跳过此次更新")
+                    await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                    continue
+                
+                # 检查是否需要更新
+                need_update = QQOperaterService._check_need_update(
+                    plugin, target_nickname, target_card_name, current_avatar_hash
+                )
+                
+                if not need_update:
+                    logger.info(f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新")
+                    await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                    continue
+                
+                logger.info(f"模仿监控：目标用户 {user_id} 信息有变化，开始更新")
+                
+                # 更新机器人头像
+                await QQOperaterService._update_bot_avatar(client, avatar_url)
+                
+                # 获取机器人ID并更新群名片
+                bot_id = await QQOperaterService._get_bot_id(client, event)
+                if bot_id:
+                    await QQOperaterService._update_bot_card(client, group_id, bot_id, target_card_name)
+                
+                # 更新缓存，记录此次模仿的信息
+                plugin.imitate_cache = {
+                    'avatar_url': avatar_url,
+                    'avatar_hash': current_avatar_hash,
+                    'nickname': target_nickname,
+                    'card': target_card_name
+                }
+                logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
                 
                 # 等待指定时间间隔
-                await asyncio.sleep(self.config.get('imitate_interval', 10) * 60)
+                await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
         
         except asyncio.CancelledError:
             # 任务被取消，正常退出
@@ -428,5 +603,5 @@ class QQOperaterService:
         except Exception as e:
             logger.error(f"模仿监控任务异常: {e}")
             # 清理任务状态
-            self.imitate_task = None
-            self.imitate_target = None
+            plugin.imitate_task = None
+            plugin.imitate_target = None
