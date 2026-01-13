@@ -345,17 +345,8 @@ class QQOperaterService:
             plugin: 插件实例
             event: 消息事件对象
         """
-        # 取消任务
-        if plugin.imitate_task:
-            plugin.imitate_task.cancel()
-            plugin.imitate_task = None
-            plugin.imitate_target = None
-        
-        # 清空模仿缓存
-        plugin.imitate_cache = None
-        
-        # 清空配置中的模仿目标
-        plugin.config['imitate'] = ''
+        # 调用辅助函数停止当前模仿任务
+        await QQOperaterService._stop_current_imitate(plugin)
         
         yield event.make_result().message("已停止模仿，并清空了配置中的模仿目标")
     
@@ -397,29 +388,29 @@ class QQOperaterService:
             return None, None, None
     
     @staticmethod
-    async def _download_avatar(avatar_url):
+    async def _download_avatar(session, avatar_url):
         """下载头像并计算哈希值
         
         Args:
+            session: aiohttp.ClientSession实例
             avatar_url: 头像URL
             
         Returns:
             str: 头像哈希值，下载失败返回None
         """
         try:
-            # 下载头像图片
-            async with aiohttp.ClientSession() as session:
-                async with session.get(avatar_url) as resp:
-                    if resp.status == 200:
-                        # 读取图片内容
-                        image_data = await resp.read()
-                        # 计算图片哈希值
-                        current_avatar_hash = hashlib.md5(image_data).hexdigest()
-                        logger.info(f"模仿监控：获取到目标用户头像，MD5哈希值: {current_avatar_hash}")
-                        return current_avatar_hash
-                    else:
-                        logger.error(f"模仿监控：下载头像失败，HTTP状态码: {resp.status}")
-                        return None
+            # 使用传入的session下载头像图片
+            async with session.get(avatar_url) as resp:
+                if resp.status == 200:
+                    # 读取图片内容
+                    image_data = await resp.read()
+                    # 计算图片哈希值
+                    current_avatar_hash = hashlib.md5(image_data).hexdigest()
+                    logger.info(f"模仿监控：获取到目标用户头像，MD5哈希值: {current_avatar_hash}")
+                    return current_avatar_hash
+                else:
+                    logger.error(f"模仿监控：下载头像失败，HTTP状态码: {resp.status}")
+                    return None
         except Exception as e:
             logger.error(f"模仿监控：下载头像或计算哈希值失败: {e}")
             return None
@@ -533,69 +524,71 @@ class QQOperaterService:
             if not client:
                 return
             
-            while True:
-                # 检查目标信息是否存在
-                if not plugin.imitate_target:
-                    break
-                
-                group_id = plugin.imitate_target['group_id']
-                user_id = plugin.imitate_target['user_id']
-                
-                logger.info(f"模仿监控：开始处理目标用户 - 群: {group_id}, 用户ID: {user_id}")
-                
-                # 获取目标用户信息
-                target_nickname, target_card_name, avatar_url = await QQOperaterService._fetch_target_info(
-                    client, group_id, user_id
-                )
-                
-                if not target_card_name:
-                    logger.warning(f"模仿监控：目标用户 {user_id} 没有昵称或群名片，跳过此次更新")
+            # 在循环外创建共享的ClientSession，避免每次循环都创建新session
+            async with aiohttp.ClientSession() as session:
+                while True:
+                    # 检查目标信息是否存在
+                    if not plugin.imitate_target:
+                        break
+                    
+                    group_id = plugin.imitate_target['group_id']
+                    user_id = plugin.imitate_target['user_id']
+                    
+                    logger.info(f"模仿监控：开始处理目标用户 - 群: {group_id}, 用户ID: {user_id}")
+                    
+                    # 获取目标用户信息
+                    target_nickname, target_card_name, avatar_url = await QQOperaterService._fetch_target_info(
+                        client, group_id, user_id
+                    )
+                    
+                    if not target_card_name:
+                        logger.warning(f"模仿监控：目标用户 {user_id} 没有昵称或群名片，跳过此次更新")
+                        await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                        continue
+                    
+                    logger.info(f"模仿监控：获取到目标用户信息 - 昵称: {target_nickname}, 群名片: {target_card_name}")
+                    logger.info(f"模仿监控：生成目标用户头像URL: {avatar_url}")
+                    
+                    # 下载头像并计算哈希值，传递共享的session
+                    current_avatar_hash = await QQOperaterService._download_avatar(session, avatar_url)
+                    
+                    # 如果头像下载失败，跳过本次循环，避免后续逻辑混乱
+                    if current_avatar_hash is None:
+                        logger.warning(f"模仿监控：目标用户 {user_id} 头像下载失败，跳过此次更新")
+                        await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                        continue
+                    
+                    # 检查是否需要更新
+                    need_update = QQOperaterService._check_need_update(
+                        plugin, target_nickname, target_card_name, current_avatar_hash
+                    )
+                    
+                    if not need_update:
+                        logger.info(f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新")
+                        await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
+                        continue
+                    
+                    logger.info(f"模仿监控：目标用户 {user_id} 信息有变化，开始更新")
+                    
+                    # 更新机器人头像
+                    await QQOperaterService._update_bot_avatar(client, avatar_url)
+                    
+                    # 获取机器人ID并更新群名片
+                    bot_id = await QQOperaterService._get_bot_id(client, event)
+                    if bot_id:
+                        await QQOperaterService._update_bot_card(client, group_id, bot_id, target_card_name)
+                    
+                    # 更新缓存，记录此次模仿的信息
+                    plugin.imitate_cache = {
+                        'avatar_url': avatar_url,
+                        'avatar_hash': current_avatar_hash,
+                        'nickname': target_nickname,
+                        'card': target_card_name
+                    }
+                    logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
+                    
+                    # 等待指定时间间隔
                     await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
-                    continue
-                
-                logger.info(f"模仿监控：获取到目标用户信息 - 昵称: {target_nickname}, 群名片: {target_card_name}")
-                logger.info(f"模仿监控：生成目标用户头像URL: {avatar_url}")
-                
-                # 下载头像并计算哈希值
-                current_avatar_hash = await QQOperaterService._download_avatar(avatar_url)
-                
-                # 如果头像下载失败，跳过本次循环，避免后续逻辑混乱
-                if current_avatar_hash is None:
-                    logger.warning(f"模仿监控：目标用户 {user_id} 头像下载失败，跳过此次更新")
-                    await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
-                    continue
-                
-                # 检查是否需要更新
-                need_update = QQOperaterService._check_need_update(
-                    plugin, target_nickname, target_card_name, current_avatar_hash
-                )
-                
-                if not need_update:
-                    logger.info(f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新")
-                    await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
-                    continue
-                
-                logger.info(f"模仿监控：目标用户 {user_id} 信息有变化，开始更新")
-                
-                # 更新机器人头像
-                await QQOperaterService._update_bot_avatar(client, avatar_url)
-                
-                # 获取机器人ID并更新群名片
-                bot_id = await QQOperaterService._get_bot_id(client, event)
-                if bot_id:
-                    await QQOperaterService._update_bot_card(client, group_id, bot_id, target_card_name)
-                
-                # 更新缓存，记录此次模仿的信息
-                plugin.imitate_cache = {
-                    'avatar_url': avatar_url,
-                    'avatar_hash': current_avatar_hash,
-                    'nickname': target_nickname,
-                    'card': target_card_name
-                }
-                logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
-                
-                # 等待指定时间间隔
-                await asyncio.sleep(plugin.config.get('imitate_interval', 10) * 60)
         
         except asyncio.CancelledError:
             # 任务被取消，正常退出
