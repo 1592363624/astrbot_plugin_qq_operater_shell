@@ -5,10 +5,12 @@ QQ操作插件
 """
 
 import asyncio
+import time
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.core.star import Star
 from astrbot.api import AstrBotConfig, logger
 from astrbot.core.star.context import Context
+from astrbot.core.message.components import At
 from .qq_operater_service import QQOperaterService
 
 
@@ -47,6 +49,41 @@ class QQOperaterPlugin(Star):
         if imitate_target:
             # 启动自动模仿任务
             await self.start_auto_imitate()
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=100)
+    async def on_group_message_mute_filter(self, event: AstrMessageEvent):
+        """群消息禁言过滤器，高优先级执行
+
+        在消息到达其他处理逻辑前，检查是否处于禁言状态
+        """
+        group_id = event.get_group_id()
+        if not group_id:
+            return
+
+        sender_id = event.get_sender_id()
+        current_time = time.time()
+
+        logger.info(f"消息过滤器：群ID={group_id}, sender_id={sender_id}, 类型={type(sender_id)}")
+
+        # 检查群是否被禁言
+        mute_groups = self.config.get("mute_groups", [])
+        logger.info(f"消息过滤器：mute_groups={mute_groups}")
+        for m in mute_groups:
+            logger.info(f"消息过滤器：群对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)})?")
+            if str(m["group_id"]) == str(group_id) and m["end_time"] > current_time:
+                logger.info(f"消息过滤：群{group_id}处于禁言状态，忽略消息")
+                event.stop_event()
+                return
+
+        # 检查用户是否被禁言
+        mute_users = self.config.get("mute_users", [])
+        logger.info(f"消息过滤器：mute_users={mute_users}")
+        for m in mute_users:
+            logger.info(f"消息过滤器：用户对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)}), user_id={m['user_id']}(类型{type(m['user_id'])}) == {sender_id}(类型{type(sender_id)})?")
+            if str(m["group_id"]) == str(group_id) and str(m["user_id"]) == str(sender_id) and m["end_time"] > current_time:
+                logger.info(f"消息过滤：用户{sender_id}在群{group_id}被禁言，忽略消息")
+                event.stop_event()
+                return
 
     async def start_auto_imitate(self):
         """启动自动模仿任务"""
@@ -209,3 +246,58 @@ async def broadcast_message(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_broadcast_message(self, event):
         yield result
+
+
+# ==================== 禁言功能指令 ====================
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("闭嘴")
+async def group_mute(self, event: AstrMessageEvent):
+    """群禁言指令
+    使用示例：
+    /闭嘴 60
+    机器人在当前群禁言60秒，期间无视任何用户消息（但可执行指令）
+    """
+    async for result in QQOperaterService.handle_group_mute(self, event):
+        yield result
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("不回复")
+async def user_mute(self, event: AstrMessageEvent):
+    """用户禁言指令
+    使用示例：
+    /不回复 @用户 60
+    机器人在60秒内不回复该用户的消息
+    """
+    async for result in QQOperaterService.handle_user_mute(self, event):
+        yield result
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("恢复")
+async def unmute(self, event: AstrMessageEvent):
+    """恢复禁言指令
+    使用示例：
+    /恢复
+    恢复当前群的禁言状态
+    /恢复 @用户
+    恢复指定用户的禁言状态
+    """
+    async for result in QQOperaterService.handle_unmute(self, event):
+        yield result
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("禁言列表")
+async def mute_list(self, event: AstrMessageEvent):
+    """查看禁言列表
+    使用示例：
+    /禁言列表
+    """
+    async for result in QQOperaterService.handle_mute_list(self, event):
+        yield result
+
+
+

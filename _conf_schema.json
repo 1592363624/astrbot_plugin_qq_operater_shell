@@ -17,5 +17,15 @@
         "default": 10,
         "minimum": 1,
         "maximum": 1440
+    },
+    "mute_groups": {
+        "description": "被全局禁言的群列表，格式：[{\"group_id\": 群号, \"end_time\": 禁言结束时间戳}]",
+        "type": "list",
+        "default": []
+    },
+    "mute_users": {
+        "description": "被禁言的用户列表，格式：[{\"group_id\": 群号, \"user_id\": 用户ID, \"end_time\": 禁言结束时间戳}]",
+        "type": "list",
+        "default": []
     }
 }

@@ -1025,3 +1025,212 @@ class QQOperaterService:
         except Exception as e:
             logger.error(f"群发消息异常: {e}")
             yield event.make_result().message(f"群发消息失败: {str(e)}")
+
+    @staticmethod
+    async def handle_group_mute(plugin, event: AstrMessageEvent):
+        """处理群禁言命令的逻辑
+
+        使用示例：
+        /闭嘴 60
+        机器人在当前群禁言60秒
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        cmd_params = event.message_str.split()
+        if len(cmd_params) < 2:
+            yield event.make_result().message("参数不足，请使用：/闭嘴 <秒数>")
+            return
+
+        try:
+            duration = int(cmd_params[1])
+            if duration <= 0:
+                yield event.make_result().message("禁言时间必须大于0秒")
+                return
+        except ValueError:
+            yield event.make_result().message("参数错误，请输入正确的秒数")
+            return
+
+        group_id = event.get_group_id()
+        if not group_id:
+            yield event.make_result().message("请在群聊中使用此命令")
+            return
+
+        import time
+        end_time = time.time() + duration
+
+        # 检查是否已在禁言中
+        mute_groups = plugin.config.get("mute_groups", [])
+        existing = next((m for m in mute_groups if m["group_id"] == group_id), None)
+
+        if existing:
+            existing["end_time"] = end_time
+            logger.info(f"更新群禁言：群{group_id}，新时长{duration}秒")
+        else:
+            mute_groups.append({"group_id": group_id, "end_time": end_time})
+            plugin.config["mute_groups"] = mute_groups
+            logger.info(f"添加群禁言：群{group_id}，时长{duration}秒")
+
+        yield event.make_result().message(f"已在本群禁言{duration}秒")
+
+    @staticmethod
+    async def handle_user_mute(plugin, event: AstrMessageEvent):
+        """处理用户禁言命令的逻辑
+
+        使用示例：
+        /不回复 @用户 60
+        机器人在60秒内不回复该用户
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        cmd_params = event.message_str.split()
+
+        # 从消息中提取@用户
+        target_user_id = None
+        from astrbot.core.message.components import At
+
+        for component in event.get_messages():
+            if isinstance(component, At) and component.qq != "all":
+                target_user_id = component.qq
+                break
+
+        # 如果没有@，尝试从参数提取
+        if not target_user_id:
+            yield event.make_result().message("请@需要禁言的用户")
+            return
+
+        # 提取时间参数（最后一个参数）
+        if len(cmd_params) < 2:
+            yield event.make_result().message("参数不足，请使用：/不回复 @用户 <秒数>")
+            return
+
+        try:
+            duration = int(cmd_params[-1])
+            if duration <= 0:
+                yield event.make_result().message("禁言时间必须大于0秒")
+                return
+        except ValueError:
+            yield event.make_result().message("参数错误，请输入正确的秒数")
+            return
+
+        group_id = event.get_group_id()
+        if not group_id:
+            yield event.make_result().message("请在群聊中使用此命令")
+            return
+
+        import time
+        end_time = time.time() + duration
+
+        # 检查是否已在禁言中
+        mute_users = plugin.config.get("mute_users", [])
+        existing = next(
+            (m for m in mute_users if m["group_id"] == group_id and m["user_id"] == target_user_id),
+            None,
+        )
+
+        if existing:
+            existing["end_time"] = end_time
+            logger.info(f"更新用户禁言：群{group_id}用户{target_user_id}，新时长{duration}秒")
+        else:
+            mute_users.append({
+                "group_id": group_id,
+                "user_id": target_user_id,
+                "end_time": end_time,
+            })
+            plugin.config["mute_users"] = mute_users
+            logger.info(f"添加用户禁言：群{group_id}用户{target_user_id}，时长{duration}秒")
+
+        yield event.make_result().message(f"已禁言用户 {target_user_id} {duration}秒")
+
+    @staticmethod
+    async def handle_unmute(plugin, event: AstrMessageEvent):
+        """处理恢复禁言命令的逻辑
+
+        使用示例：
+        /恢复
+        恢复当前群的禁言状态
+
+        /恢复 @用户
+        恢复指定用户的禁言状态
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        group_id = event.get_group_id()
+        if not group_id:
+            yield event.make_result().message("请在群聊中使用此命令")
+            return
+
+        # 检查是否有@用户
+        from astrbot.core.message.components import At
+
+        target_user_id = None
+        for component in event.get_messages():
+            if isinstance(component, At) and component.qq != "all":
+                target_user_id = component.qq
+                break
+
+        if target_user_id:
+            # 恢复指定用户
+            mute_users = plugin.config.get("mute_users", [])
+            mute_users = [
+                m for m in mute_users
+                if not (m["group_id"] == group_id and m["user_id"] == target_user_id)
+            ]
+            plugin.config["mute_users"] = mute_users
+            yield event.make_result().message(f"已恢复用户 {target_user_id}")
+        else:
+            # 恢复当前群
+            mute_groups = plugin.config.get("mute_groups", [])
+            mute_groups = [m for m in mute_groups if m["group_id"] != group_id]
+            plugin.config["mute_groups"] = mute_groups
+            yield event.make_result().message("已恢复本群禁言")
+
+    @staticmethod
+    async def handle_mute_list(plugin, event: AstrMessageEvent):
+        """处理查看禁言列表命令的逻辑
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        import time
+        current_time = time.time()
+
+        # 清理过期的群禁言
+        mute_groups = plugin.config.get("mute_groups", [])
+        active_groups = [m for m in mute_groups if m["end_time"] > current_time]
+        if len(active_groups) != len(mute_groups):
+            plugin.config["mute_groups"] = active_groups
+
+        # 清理过期的用户禁言
+        mute_users = plugin.config.get("mute_users", [])
+        active_users = [m for m in mute_users if m["end_time"] > current_time]
+        if len(active_users) != len(mute_users):
+            plugin.config["mute_users"] = active_users
+
+        result = "当前禁言状态：\n\n"
+
+        if active_groups:
+            result += "【群禁言】\n"
+            for m in active_groups:
+                remaining = int(m["end_time"] - current_time)
+                result += f"  群{m['group_id']}：剩余{remaining}秒\n"
+        else:
+            result += "【群禁言】无\n"
+
+        result += "\n"
+
+        if active_users:
+            result += "【用户禁言】\n"
+            for m in active_users:
+                remaining = int(m["end_time"] - current_time)
+                result += f"  群{m['group_id']} 用户{m['user_id']}：剩余{remaining}秒\n"
+        else:
+            result += "【用户禁言】无\n"
+
+        yield event.make_result().message(result)
