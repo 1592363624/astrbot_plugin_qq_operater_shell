@@ -926,23 +926,13 @@ class QQOperaterService:
         使用示例：
         /群发消息 你好，这是测试消息
         /群发消息 你好 123456 789012
+        /群发消息 图文消息（含图片） 123456
 
         Args:
             plugin: 插件实例
             event: 消息事件对象
         """
-        # 解析命令参数
-        cmd_params = event.message_str.split(maxsplit=1)
-        if len(cmd_params) < 2:
-            yield event.make_result().message(
-                "参数不足，请使用：/群发消息 <消息内容> [群号1] [群号2] ..."
-            )
-            return
-
-        message_content = cmd_params[1].strip()
-        if not message_content:
-            yield event.make_result().message("消息内容不能为空")
-            return
+        from astrbot.core.message.components import Image, Plain
 
         # 获取客户端
         client = await QQOperaterService.get_client(plugin, event)
@@ -950,23 +940,49 @@ class QQOperaterService:
             yield event.make_result().message("当前平台不支持此命令")
             return
 
-        # 解析群号列表
+        # 遍历消息组件链，提取命令后的消息内容（保留图片等富媒体组件）
+        # 并解析末尾的群号参数
+        message_chain = []
         target_groups = []
-        remaining_parts = message_content.split()
+        first_text = True  # 标记是否还在处理命令前缀所在的第一个文本组件
 
-        # 检查最后一个参数是否为群号（纯数字）
-        if len(remaining_parts) > 1 and remaining_parts[-1].isdigit():
-            # 从后往前提取群号
-            group_ids = []
-            msg_parts = []
-            for part in reversed(remaining_parts):
-                if part.isdigit():
-                    group_ids.insert(0, int(part))
+        for component in event.get_messages():
+            if isinstance(component, Plain):
+                text = component.text
+                if first_text:
+                    first_text = False
+                    # 去掉命令前缀"群发消息"
+                    if text.startswith("群发消息"):
+                        text = text[len("群发消息"):]
+                    text = text.strip()
+                    if not text:
+                        continue
+
+                # 检查最后一个文本组件是否包含群号（纯数字或末尾为数字）
+                parts = text.split()
+                if len(parts) > 1 and parts[-1].isdigit():
+                    # 末尾数字作为群号，其余作为消息内容
+                    target_groups.append(int(parts[-1]))
+                    text = " ".join(parts[:-1])
+                    if text:
+                        message_chain.append({"type": "text", "data": {"text": text}})
+                elif len(parts) == 1 and parts[0].isdigit() and message_chain:
+                    # 纯数字且前面已有消息内容，视为群号
+                    target_groups.append(int(parts[0]))
                 else:
-                    msg_parts.insert(0, part)
-                    break
-            message_content = " ".join(msg_parts)
-            target_groups = group_ids
+                    message_chain.append({"type": "text", "data": {"text": text}})
+
+            elif isinstance(component, Image):
+                # 保留图片组件，使用url属性（aiocqhttp send_group_msg 支持url格式）
+                image_url = component.url or component.file
+                if image_url:
+                    message_chain.append({"type": "image", "data": {"file": image_url}})
+
+        if not message_chain:
+            yield event.make_result().message(
+                "参数不足，请使用：/群发消息 <消息内容> [群号1] [群号2] ..."
+            )
+            return
 
         try:
             if target_groups:
@@ -978,7 +994,7 @@ class QQOperaterService:
                 for group_id in target_groups:
                     try:
                         await client.api.call_action(
-                            "send_group_msg", group_id=group_id, message=message_content
+                            "send_group_msg", group_id=group_id, message=message_chain
                         )
                         success_count += 1
                     except Exception as e:
@@ -1012,7 +1028,7 @@ class QQOperaterService:
                             await client.api.call_action(
                                 "send_group_msg",
                                 group_id=group_id,
-                                message=message_content,
+                                message=message_chain,
                             )
                             success_count += 1
                         except Exception as e:
