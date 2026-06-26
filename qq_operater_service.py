@@ -12,6 +12,7 @@ import asyncio
 import aiohttp
 import hashlib
 import re
+import time
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
@@ -1250,3 +1251,308 @@ class QQOperaterService:
             result += "【用户禁言】无\n"
 
         yield event.make_result().message(result)
+
+    @staticmethod
+    async def handle_muted_group_list(plugin, event: AstrMessageEvent):
+        """处理获取被禁言群列表命令的逻辑
+
+        使用示例：
+        /被禁言群列表
+        返回所有被禁言的群列表信息（调用 NapCat API）
+
+        检测两种禁言状态：
+        1. 全员禁言：群是否开启了全员禁言
+        2. 单独禁言：机器人是否被单独禁言
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("当前平台不支持此命令")
+            return
+
+        try:
+            # 获取机器人所在的所有群
+            logger.info("获取被禁言群列表")
+            group_list = await client.api.call_action("get_group_list", no_cache=False)
+
+            # 调试：输出原始返回值
+            logger.info(f"[调试] get_group_list 原始返回: {group_list}")
+
+            # 处理返回格式
+            if isinstance(group_list, dict) and "data" in group_list:
+                group_list = group_list["data"]
+
+            if not group_list or not isinstance(group_list, list):
+                yield event.make_result().message("获取群列表失败或没有群")
+                return
+
+            logger.info(f"[调试] 共获取到 {len(group_list)} 个群")
+
+            # 获取机器人自己的 ID
+            bot_id = None
+            try:
+                login_info = await client.api.call_action("get_login_info")
+                logger.info(f"[调试] get_login_info 原始返回: {login_info}")
+                if isinstance(login_info, dict):
+                    if login_info.get("status") == "ok" and "data" in login_info:
+                        login_info = login_info["data"]
+                    bot_id = str(login_info.get("user_id") or login_info.get("uin"))
+                logger.info(f"[调试] 机器人 ID: {bot_id}")
+            except Exception as e:
+                logger.error(f"获取机器人 ID 失败: {e}")
+
+            # 遍历所有群，检查哪些群被禁言
+            muted_groups = []
+            current_time = time.time()
+
+            for group in group_list:
+                group_id = group.get("group_id")
+                group_name = group.get("group_name", "未知群名")
+
+                try:
+                    # 调用 API 获取群信息（包含全员禁言状态）
+                    logger.info(f"[调试] 正在检测群 {group_id} ({group_name}) 的禁言状态...")
+                    group_info = await client.api.call_action(
+                        "get_group_info",
+                        group_id=group_id,
+                        no_cache=True
+                    )
+                    logger.info(f"[调试] 群 {group_id} 的 get_group_info 原始返回: {group_info}")
+
+                    # 检查全员禁言状态
+                    group_is_muted = False
+                    bot_is_muted = False
+                    bot_mute_end_time = 0
+
+                    if isinstance(group_info, dict):
+                        # 处理返回格式
+                        data = group_info.get("data", group_info)
+                        logger.info(f"[调试] 群 {group_id} 解析后的数据: {data}")
+
+                        # 检查全员禁言字段 group_all_shut（NapCat 扩展字段）
+                        # -1 表示全员禁言，0 表示未全员禁言
+                        group_all_shut = data.get("group_all_shut")
+                        logger.info(f"[调试] 群 {group_id} group_all_shut={group_all_shut}")
+
+                        if group_all_shut == -1:
+                            group_is_muted = True
+                            logger.info(f"[调试] 群 {group_id} 全员禁言已开启")
+
+                        # 同时检查机器人是否被单独禁言
+                        member_info = await client.api.call_action(
+                            "get_group_member_info",
+                            group_id=group_id,
+                            user_id=int(bot_id),
+                            no_cache=True
+                        )
+                        logger.info(f"[调试] 群 {group_id} 机器人成员信息: {member_info}")
+
+                        if isinstance(member_info, dict):
+                            member_data = member_info.get("data", member_info)
+                            shut_up_timestamp = member_data.get("shut_up_timestamp", 0)
+                            logger.info(f"[调试] 群 {group_id} 机器人 shut_up_timestamp={shut_up_timestamp}")
+
+                            if shut_up_timestamp > current_time:
+                                bot_is_muted = True
+                                bot_mute_end_time = shut_up_timestamp
+
+                    logger.info(f"[调试] 群 {group_id} 检测结果: group_is_muted={group_is_muted}, bot_is_muted={bot_is_muted}")
+
+                    # 如果群被全员禁言或机器人被单独禁言，添加到列表
+                    if group_is_muted or bot_is_muted:
+                        muted_groups.append({
+                            "group_id": group_id,
+                            "group_name": group_name,
+                            "group_is_muted": group_is_muted,
+                            "bot_is_muted": bot_is_muted,
+                            "bot_mute_remaining": int(bot_mute_end_time - current_time) if bot_is_muted else 0,
+                            "muted_users": []
+                        })
+
+                except Exception as e:
+                    logger.error(f"检测群 {group_id} 禁言状态失败: {e}")
+                    continue
+
+            # 格式化输出结果
+            if not muted_groups:
+                result = "✅ 当前没有被禁言的群\n"
+            else:
+                result = f"被禁言的群列表（共 {len(muted_groups)} 个）：\n\n"
+                for group_info in muted_groups:
+                    result += f"📍 群：{group_info['group_name']}（{group_info['group_id']}）\n"
+
+                    # 显示全员禁言状态
+                    if group_info.get("group_is_muted"):
+                        result += f"  🔇 全员禁言已开启\n"
+
+                    # 显示机器人单独禁言状态
+                    if group_info.get("bot_is_muted"):
+                        result += f"  ⚠️ 机器人被单独禁言，剩余 {group_info['bot_mute_remaining']} 秒\n"
+
+                    if group_info["muted_users"]:
+                        result += f"  👥 被禁言用户：{len(group_info['muted_users'])} 人\n"
+                        for user in group_info["muted_users"][:5]:  # 最多显示5个用户
+                            result += f"    - 用户 {user['user_id']}：剩余 {user['remaining']} 秒\n"
+                        if len(group_info["muted_users"]) > 5:
+                            result += f"    ... 还有 {len(group_info['muted_users']) - 5} 人\n"
+
+                    result += "\n"
+
+            yield event.make_result().message(result)
+
+        except Exception as e:
+            logger.error(f"获取被禁言群列表失败: {e}")
+            yield event.make_result().message(f"获取失败：{str(e)}\n\n可能原因：\n1. NapCat 不支持 get_group_shut_list API\n2. 权限不足")
+
+    @staticmethod
+    async def handle_leave_muted_groups(plugin, event: AstrMessageEvent):
+        """处理一键退出被禁言群命令的逻辑
+
+        使用示例：
+        /退出被禁言群
+        一键退出所有被禁言的群（全员禁言或机器人被单独禁言）
+
+        Args:
+            plugin: 插件实例
+            event: 消息事件对象
+        """
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("当前平台不支持此命令")
+            return
+
+        try:
+            # 获取机器人所在的所有群
+            logger.info("开始退出被禁言群")
+            group_list = await client.api.call_action("get_group_list", no_cache=False)
+
+            # 处理返回格式
+            if isinstance(group_list, dict) and "data" in group_list:
+                group_list = group_list["data"]
+
+            if not group_list or not isinstance(group_list, list):
+                yield event.make_result().message("获取群列表失败或没有群")
+                return
+
+            logger.info(f"[调试] 共获取到 {len(group_list)} 个群")
+
+            # 获取机器人自己的 ID
+            bot_id = None
+            try:
+                login_info = await client.api.call_action("get_login_info")
+                if isinstance(login_info, dict):
+                    if login_info.get("status") == "ok" and "data" in login_info:
+                        login_info = login_info["data"]
+                    bot_id = str(login_info.get("user_id") or login_info.get("uin"))
+                logger.info(f"[调试] 机器人 ID: {bot_id}")
+            except Exception as e:
+                logger.error(f"获取机器人 ID 失败: {e}")
+
+            # 遍历所有群，检查哪些群被禁言并退出
+            left_groups = []
+            failed_groups = []
+            current_time = time.time()
+
+            for group in group_list:
+                group_id = group.get("group_id")
+                group_name = group.get("group_name", "未知群名")
+
+                try:
+                    # 检查全员禁言状态
+                    group_is_muted = False
+                    bot_is_muted = False
+
+                    # 获取群信息
+                    group_info = await client.api.call_action(
+                        "get_group_info",
+                        group_id=group_id,
+                        no_cache=True
+                    )
+
+                    if isinstance(group_info, dict):
+                        data = group_info.get("data", group_info)
+
+                        # 检查全员禁言字段 group_all_shut（NapCat 扩展字段）
+                        # -1 表示全员禁言，0 表示未全员禁言
+                        group_all_shut = data.get("group_all_shut")
+                        if group_all_shut == -1:
+                            group_is_muted = True
+
+                        # 检查机器人是否被单独禁言
+                        member_info = await client.api.call_action(
+                            "get_group_member_info",
+                            group_id=group_id,
+                            user_id=int(bot_id),
+                            no_cache=True
+                        )
+
+                        if isinstance(member_info, dict):
+                            member_data = member_info.get("data", member_info)
+                            shut_up_timestamp = member_data.get("shut_up_timestamp", 0)
+
+                            if shut_up_timestamp > current_time:
+                                bot_is_muted = True
+
+                    # 如果群被禁言，尝试退出
+                    if group_is_muted or bot_is_muted:
+                        reason = []
+                        if group_is_muted:
+                            reason.append("全员禁言")
+                        if bot_is_muted:
+                            reason.append("机器人被单独禁言")
+
+                        logger.info(f"尝试退出群 {group_id} ({group_name})，原因: {', '.join(reason)}")
+
+                        try:
+                            # 调用退出群 API
+                            await client.api.call_action("set_group_leave", group_id=group_id)
+                            left_groups.append({
+                                "group_id": group_id,
+                                "group_name": group_name,
+                                "reason": reason
+                            })
+                            logger.info(f"成功退出群 {group_id} ({group_name})")
+                        except Exception as e:
+                            failed_groups.append({
+                                "group_id": group_id,
+                                "group_name": group_name,
+                                "reason": reason,
+                                "error": str(e)
+                            })
+                            logger.error(f"退出群 {group_id} ({group_name}) 失败: {e}")
+
+                except Exception as e:
+                    logger.error(f"检测群 {group_id} 禁言状态失败: {e}")
+                    continue
+
+            # 格式化输出结果
+            if not left_groups and not failed_groups:
+                result = "✅ 没有被禁言的群，无需退出\n"
+            else:
+                result = f"退出被禁言群操作完成：\n\n"
+
+                if left_groups:
+                    result += f"✅ 成功退出 {len(left_groups)} 个群：\n"
+                    for group_info in left_groups:
+                        result += f"  📍 {group_info['group_name']}（{group_info['group_id']}）\n"
+                        result += f"     原因: {', '.join(group_info['reason'])}\n"
+                    result += "\n"
+
+                if failed_groups:
+                    result += f"❌ 退出失败 {len(failed_groups)} 个群：\n"
+                    for group_info in failed_groups:
+                        result += f"  📍 {group_info['group_name']}（{group_info['group_id']}）\n"
+                        result += f"     原因: {', '.join(group_info['reason'])}\n"
+                        result += f"     错误: {group_info['error']}\n"
+                    result += "\n"
+
+            yield event.make_result().message(result)
+
+        except Exception as e:
+            logger.error(f"退出被禁言群失败: {e}")
+            yield event.make_result().message(f"操作失败：{str(e)}")

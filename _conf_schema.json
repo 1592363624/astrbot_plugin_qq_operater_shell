@@ -27,5 +27,10 @@
         "description": "被禁言的用户列表，格式：[{\"group_id\": 群号, \"user_id\": 用户ID, \"end_time\": 禁言结束时间戳}]",
         "type": "list",
         "default": []
+    },
+    "enable_real_mute_check": {
+        "description": "启用真实禁言检测（调用 NapCat API 检测 QQ 群真实禁言状态）",
+        "type": "bool",
+        "default": false
     }
 }

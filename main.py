@@ -85,6 +85,56 @@ class QQOperaterPlugin(Star):
                 event.stop_event()
                 return
 
+        # 检查是否启用真实禁言检测
+        if self.config.get("enable_real_mute_check", False):
+            # 检查缓存，避免频繁调用 API
+            cache_key = f"real_mute_cache_{group_id}"
+            cache_data = self.config.get(cache_key, {})
+            cache_time = cache_data.get("time", 0)
+            cache_interval = 60  # 缓存 60 秒
+
+            # 如果缓存未过期，使用缓存数据
+            if current_time - cache_time < cache_interval:
+                muted_users = cache_data.get("muted_users", [])
+                if sender_id in muted_users:
+                    logger.info(f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息")
+                    event.stop_event()
+                    return
+            else:
+                # 缓存过期，调用 API 检测真实禁言状态
+                try:
+                    client = await QQOperaterService.get_client(self, event)
+                    if client:
+                        shut_list = await client.api.call_action("get_group_shut_list", group_id=group_id)
+                        muted_users = []
+
+                        # 解析禁言列表
+                        if isinstance(shut_list, list):
+                            for user_info in shut_list:
+                                user_id = str(user_info.get("user_id", ""))
+                                muted_users.append(user_id)
+                        elif isinstance(shut_list, dict) and "data" in shut_list:
+                            shut_list_data = shut_list["data"]
+                            if isinstance(shut_list_data, list):
+                                for user_info in shut_list_data:
+                                    user_id = str(user_info.get("user_id", ""))
+                                    muted_users.append(user_id)
+
+                        # 更新缓存
+                        self.config[cache_key] = {
+                            "time": current_time,
+                            "muted_users": muted_users
+                        }
+
+                        # 检查发送者是否被禁言
+                        if sender_id in muted_users:
+                            logger.info(f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息")
+                            event.stop_event()
+                            return
+                except Exception as e:
+                    logger.error(f"真实禁言检测失败：{e}")
+                    # 检测失败不影响正常流程，继续处理消息
+
     async def start_auto_imitate(self):
         """启动自动模仿任务"""
         # 获取QQ客户端
@@ -297,6 +347,31 @@ async def mute_list(self, event: AstrMessageEvent):
     /禁言列表
     """
     async for result in QQOperaterService.handle_mute_list(self, event):
+        yield result
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("被禁言群列表")
+async def muted_group_list(self, event: AstrMessageEvent):
+    """获取被禁言的群列表
+    使用示例：
+    /被禁言群列表
+    返回所有被禁言的群列表信息（调用 NapCat API）
+    检测全员禁言和机器人单独禁言两种状态
+    """
+    async for result in QQOperaterService.handle_muted_group_list(self, event):
+        yield result
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("退出被禁言群")
+async def leave_muted_groups(self, event: AstrMessageEvent):
+    """一键退出被禁言的群
+    使用示例：
+    /退出被禁言群
+    自动检测并退出所有被禁言的群（全员禁言或机器人被单独禁言）
+    """
+    async for result in QQOperaterService.handle_leave_muted_groups(self, event):
         yield result
 
 
