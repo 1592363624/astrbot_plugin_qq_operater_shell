@@ -32,5 +32,15 @@
         "description": "启用真实禁言检测（调用 NapCat API 检测 QQ 群真实禁言状态）",
         "type": "bool",
         "default": false
+    },
+    "original_avatar": {
+        "description": "机器人原始头像（支持图片路径、URL或Base64），停止模仿时恢复使用",
+        "type": "string",
+        "default": ""
+    },
+    "original_card": {
+        "description": "机器人原始群名片/昵称，停止模仿时恢复使用",
+        "type": "string",
+        "default": ""
     }
 }

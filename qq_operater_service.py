@@ -372,10 +372,53 @@ class QQOperaterService:
             plugin: 插件实例
             event: 消息事件对象
         """
+        # 获取客户端
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("无法获取客户端")
+            return
+
+        # 在停止模仿之前，先保存模仿目标的群号（用于恢复群名片）
+        imitate_group_id = None
+        if plugin.imitate_target:
+            imitate_group_id = plugin.imitate_target.get("group_id")
+
         # 调用辅助函数停止当前模仿任务
         await QQOperaterService._stop_current_imitate(plugin)
 
-        yield event.make_result().message("已停止模仿，并清空了配置中的模仿目标")
+        # 恢复原始头像和群名片
+        restore_results = []
+        
+        # 恢复原始头像
+        original_avatar = plugin.config.get("original_avatar", "")
+        if original_avatar:
+            try:
+                await QQOperaterService._update_bot_avatar(client, original_avatar)
+                restore_results.append("头像")
+            except Exception as e:
+                logger.error(f"恢复原始头像失败: {e}")
+
+        # 恢复原始群名片
+        original_card = plugin.config.get("original_card", "")
+        if original_card and imitate_group_id:
+            try:
+                bot_id = await QQOperaterService._get_bot_id(client, event)
+                if bot_id:
+                    await QQOperaterService._update_bot_card(
+                        client, imitate_group_id, bot_id, original_card
+                    )
+                    restore_results.append("群名片")
+                else:
+                    logger.warning("无法获取机器人ID，无法恢复群名片")
+            except Exception as e:
+                logger.error(f"恢复原始群名片失败: {e}")
+        elif original_card and not imitate_group_id:
+            logger.warning("未配置原始群名片或无法获取群号，无法恢复群名片")
+
+        if restore_results:
+            yield event.make_result().message(f"已停止模仿，并恢复了{'、'.join(restore_results)}")
+        else:
+            yield event.make_result().message("已停止模仿，但未配置原始头像或群名片，无法恢复")
 
     @staticmethod
     async def handle_update_avatar(plugin, event: AstrMessageEvent):
