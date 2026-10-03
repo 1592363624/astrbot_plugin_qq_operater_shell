@@ -988,33 +988,36 @@ class QQOperaterService:
         # 并解析末尾的群号参数
         message_chain = []
         target_groups = []
-        first_text = True  # 标记是否还在处理命令前缀所在的第一个文本组件
+        command_found = False  # 标记是否已定位并剥离命令关键字
 
         for component in event.get_messages():
             if isinstance(component, Plain):
                 text = component.text
-                if first_text:
-                    first_text = False
-                    # 去掉命令前缀"群发消息"
-                    if text.startswith("群发消息"):
-                        text = text[len("群发消息"):]
-                    text = text.strip()
-                    if not text:
+                if not command_found:
+                    # 唤醒前缀（如"."、"/"）只在 message_str 中被剥离，消息链的文本组件仍保留前缀，
+                    # 因此不能假设文本以"群发消息"开头，需定位命令关键字并丢弃其之前及本身的内容
+                    cmd_idx = text.find("群发消息")
+                    if cmd_idx == -1:
                         continue
+                    command_found = True
+                    text = text[cmd_idx + len("群发消息"):]
+                text = text.strip()
+                if not text:
+                    continue
 
-                # 检查最后一个文本组件是否包含群号（纯数字或末尾为数字）
                 parts = text.split()
-                if len(parts) > 1 and parts[-1].isdigit():
-                    # 末尾数字作为群号，其余作为消息内容
-                    target_groups.append(int(parts[-1]))
-                    text = " ".join(parts[:-1])
-                    if text:
-                        message_chain.append({"type": "text", "data": {"text": text}})
-                elif len(parts) == 1 and parts[0].isdigit() and message_chain:
-                    # 纯数字且前面已有消息内容，视为群号
+                if len(parts) == 1 and parts[0].isdigit() and message_chain:
+                    # 独立的纯数字文本段且前面已有消息内容，视为群号
                     target_groups.append(int(parts[0]))
                 else:
-                    message_chain.append({"type": "text", "data": {"text": text}})
+                    # 末尾连续的纯数字作为群号列表，其余作为消息内容
+                    group_nums = []
+                    while len(parts) > 1 and parts[-1].isdigit():
+                        group_nums.insert(0, int(parts.pop()))
+                    text = " ".join(parts)
+                    if text:
+                        message_chain.append({"type": "text", "data": {"text": text}})
+                    target_groups.extend(group_nums)
 
             elif isinstance(component, Image):
                 # 保留图片组件，使用url属性（aiocqhttp send_group_msg 支持url格式）

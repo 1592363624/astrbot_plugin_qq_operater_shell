@@ -216,6 +216,8 @@ async def get_group_list(self, event: AstrMessageEvent):
     """获取群列表"""
     async for result in QQOperaterService.handle_get_group_list(self, event):
         yield result
+    # 指令已处理完毕，终止事件传播，避免该指令消息继续被其他插件和 LLM 处理
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -227,6 +229,7 @@ async def get_group_member_info(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_get_group_member_info(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -239,6 +242,7 @@ async def imitate_user(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_imitate_user(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -250,6 +254,7 @@ async def stop_imitate(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_stop_imitate(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -262,6 +267,7 @@ async def update_avatar(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_update_avatar(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -273,6 +279,7 @@ async def update_avatar_url(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_update_avatar_url(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -284,6 +291,7 @@ async def update_nickname(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_update_nickname(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -296,6 +304,7 @@ async def broadcast_message(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_broadcast_message(self, event):
         yield result
+    event.stop_event()
 
 
 # ==================== 禁言功能指令 ====================
@@ -311,6 +320,7 @@ async def group_mute(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_group_mute(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -323,6 +333,7 @@ async def user_mute(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_user_mute(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -337,6 +348,7 @@ async def unmute(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_unmute(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -348,6 +360,7 @@ async def mute_list(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_mute_list(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -361,6 +374,7 @@ async def muted_group_list(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_muted_group_list(self, event):
         yield result
+    event.stop_event()
 
 
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -373,6 +387,7 @@ async def leave_muted_groups(self, event: AstrMessageEvent):
     """
     async for result in QQOperaterService.handle_leave_muted_groups(self, event):
         yield result
+    event.stop_event()
 
 
 
