@@ -4,3 +4,6 @@ __pycache__/
 *$py.class
 .trae/
 .*/
+# AstrBot runtime data accidentally created inside the plugin dir
+# (contains cmd_config.json with credentials, must never be committed)
+data/
