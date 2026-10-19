@@ -9,22 +9,31 @@ QQ操作服务模块
 """
 
 import asyncio
-import aiohttp
 import hashlib
 import re
 import time
 from datetime import datetime
-from astrbot.api.event import AstrMessageEvent
+
+import aiohttp
+
 from astrbot.api import logger
-import astrbot.api.message_components as Comp
+from astrbot.api.event import AstrMessageEvent
 from astrbot.core.utils.session_waiter import (
-    session_waiter,
     SessionController,
+    session_waiter,
 )
 
 
 class QQOperaterService:
     """QQ操作服务类，处理插件的核心逻辑"""
+
+    @staticmethod
+    def _save_config(plugin):
+        """保存插件配置；失败时只记录日志，不影响指令结果。"""
+        try:
+            plugin.config.save_config()
+        except Exception as e:
+            logger.error(f"保存插件配置失败: {e}")
 
     @staticmethod
     def format_timestamp(timestamp):
@@ -211,11 +220,16 @@ class QQOperaterService:
         """
         if plugin.imitate_task:
             plugin.imitate_task.cancel()
+            try:
+                await plugin.imitate_task
+            except asyncio.CancelledError:
+                pass
             plugin.imitate_task = None
             plugin.imitate_target = None
 
         plugin.imitate_cache = None
         plugin.config["imitate"] = ""
+        QQOperaterService._save_config(plugin)
 
     @staticmethod
     async def _start_imitate_target(plugin, event, group_id, user_id):
@@ -229,6 +243,7 @@ class QQOperaterService:
         """
         # 保存目标信息到配置，格式：群号,QQ号
         plugin.config["imitate"] = f"{group_id},{user_id}"
+        QQOperaterService._save_config(plugin)
 
         # 存储目标信息
         plugin.imitate_target = {"group_id": group_id, "user_id": user_id}
@@ -388,7 +403,7 @@ class QQOperaterService:
 
         # 恢复原始头像和群名片
         restore_results = []
-        
+
         # 恢复原始头像
         original_avatar = plugin.config.get("original_avatar", "")
         if original_avatar:
@@ -416,9 +431,13 @@ class QQOperaterService:
             logger.warning("未配置原始群名片或无法获取群号，无法恢复群名片")
 
         if restore_results:
-            yield event.make_result().message(f"已停止模仿，并恢复了{'、'.join(restore_results)}")
+            yield event.make_result().message(
+                f"已停止模仿，并恢复了{'、'.join(restore_results)}"
+            )
         else:
-            yield event.make_result().message("已停止模仿，但未配置原始头像或群名片，无法恢复")
+            yield event.make_result().message(
+                "已停止模仿，但未配置原始头像或群名片，无法恢复"
+            )
 
     @staticmethod
     async def handle_update_avatar(plugin, event: AstrMessageEvent):
@@ -553,7 +572,7 @@ class QQOperaterService:
                     if not success:
                         await confirm_event.send(
                             confirm_event.make_result().message(
-                                f"更新头像失败，请尝试使用URL方式：/更新头像URL <头像URL>"
+                                "更新头像失败，请尝试使用URL方式：/更新头像URL <头像URL>"
                             )
                         )
                         controller.stop()  # 失败后也停止会话，避免无限等待
@@ -786,7 +805,7 @@ class QQOperaterService:
             client: QQ客户端实例
             avatar_url: 头像URL
         """
-        logger.info(f"模仿监控：开始更新机器人头像")
+        logger.info("模仿监控：开始更新机器人头像")
         try:
             avatar_result = await client.api.call_action(
                 "set_qq_avatar", file=avatar_url
@@ -813,7 +832,7 @@ class QQOperaterService:
             return bot_id
 
         # 如果无法从event获取，尝试从客户端获取
-        logger.warning(f"模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
+        logger.warning("模仿监控：无法从事件获取机器人ID，尝试从客户端获取")
         try:
             login_info = await client.api.call_action("get_login_info")
             if isinstance(login_info, dict):
@@ -826,7 +845,7 @@ class QQOperaterService:
         except Exception as e:
             logger.error(f"模仿监控：获取机器人ID失败: {e}")
 
-        logger.error(f"模仿监控：无法获取机器人ID")
+        logger.error("模仿监控：无法获取机器人ID")
         return None
 
     @staticmethod
@@ -949,7 +968,7 @@ class QQOperaterService:
                         "nickname": target_nickname,
                         "card": target_card_name,
                     }
-                    logger.info(f"模仿监控：更新缓存成功，下次将对比当前信息")
+                    logger.info("模仿监控：更新缓存成功，下次将对比当前信息")
 
                     # 等待指定时间间隔
                     await asyncio.sleep(plugin.config.get("imitate_interval", 10) * 60)
@@ -978,6 +997,13 @@ class QQOperaterService:
         """
         from astrbot.core.message.components import Image, Plain
 
+        # 消息发送间隔，限制在配置声明的 0.1~60 秒范围内
+        try:
+            send_interval = float(plugin.config.get("send_interval", 1))
+        except (TypeError, ValueError):
+            send_interval = 1.0
+        send_interval = max(0.1, min(send_interval, 60.0))
+
         # 获取客户端
         client = await QQOperaterService.get_client(plugin, event)
         if not client:
@@ -1000,7 +1026,7 @@ class QQOperaterService:
                     if cmd_idx == -1:
                         continue
                     command_found = True
-                    text = text[cmd_idx + len("群发消息"):]
+                    text = text[cmd_idx + len("群发消息") :]
                 text = text.strip()
                 if not text:
                     continue
@@ -1038,7 +1064,7 @@ class QQOperaterService:
                 fail_count = 0
                 fail_groups = []
 
-                for group_id in target_groups:
+                for index, group_id in enumerate(target_groups):
                     try:
                         await client.api.call_action(
                             "send_group_msg", group_id=group_id, message=message_chain
@@ -1048,6 +1074,8 @@ class QQOperaterService:
                         fail_count += 1
                         fail_groups.append(str(group_id))
                         logger.error(f"群发消息到群 {group_id} 失败: {e}")
+                    if index < len(target_groups) - 1:
+                        await asyncio.sleep(send_interval)
 
                 result_msg = f"群发消息完成：成功 {success_count} 个群"
                 if fail_count > 0:
@@ -1068,7 +1096,7 @@ class QQOperaterService:
                 success_count = 0
                 fail_count = 0
 
-                for group in groups:
+                for index, group in enumerate(groups):
                     group_id = group.get("group_id")
                     if group_id:
                         try:
@@ -1081,6 +1109,8 @@ class QQOperaterService:
                         except Exception as e:
                             fail_count += 1
                             logger.error(f"群发消息到群 {group_id} 失败: {e}")
+                    if index < len(groups) - 1:
+                        await asyncio.sleep(send_interval)
 
                 yield event.make_result().message(
                     f"群发消息完成：成功 {success_count} 个群，失败 {fail_count} 个群"
@@ -1121,6 +1151,7 @@ class QQOperaterService:
             return
 
         import time
+
         end_time = time.time() + duration
 
         # 检查是否已在禁言中
@@ -1132,9 +1163,10 @@ class QQOperaterService:
             logger.info(f"更新群禁言：群{group_id}，新时长{duration}秒")
         else:
             mute_groups.append({"group_id": group_id, "end_time": end_time})
-            plugin.config["mute_groups"] = mute_groups
             logger.info(f"添加群禁言：群{group_id}，时长{duration}秒")
 
+        plugin.config["mute_groups"] = mute_groups
+        QQOperaterService._save_config(plugin)
         yield event.make_result().message(f"已在本群禁言{duration}秒")
 
     @staticmethod
@@ -1185,27 +1217,39 @@ class QQOperaterService:
             return
 
         import time
+
         end_time = time.time() + duration
 
         # 检查是否已在禁言中
         mute_users = plugin.config.get("mute_users", [])
         existing = next(
-            (m for m in mute_users if m["group_id"] == group_id and m["user_id"] == target_user_id),
+            (
+                m
+                for m in mute_users
+                if m["group_id"] == group_id and m["user_id"] == target_user_id
+            ),
             None,
         )
 
         if existing:
             existing["end_time"] = end_time
-            logger.info(f"更新用户禁言：群{group_id}用户{target_user_id}，新时长{duration}秒")
+            logger.info(
+                f"更新用户禁言：群{group_id}用户{target_user_id}，新时长{duration}秒"
+            )
         else:
-            mute_users.append({
-                "group_id": group_id,
-                "user_id": target_user_id,
-                "end_time": end_time,
-            })
-            plugin.config["mute_users"] = mute_users
-            logger.info(f"添加用户禁言：群{group_id}用户{target_user_id}，时长{duration}秒")
+            mute_users.append(
+                {
+                    "group_id": group_id,
+                    "user_id": target_user_id,
+                    "end_time": end_time,
+                }
+            )
+            logger.info(
+                f"添加用户禁言：群{group_id}用户{target_user_id}，时长{duration}秒"
+            )
 
+        plugin.config["mute_users"] = mute_users
+        QQOperaterService._save_config(plugin)
         yield event.make_result().message(f"已禁言用户 {target_user_id} {duration}秒")
 
     @staticmethod
@@ -1241,16 +1285,19 @@ class QQOperaterService:
             # 恢复指定用户
             mute_users = plugin.config.get("mute_users", [])
             mute_users = [
-                m for m in mute_users
+                m
+                for m in mute_users
                 if not (m["group_id"] == group_id and m["user_id"] == target_user_id)
             ]
             plugin.config["mute_users"] = mute_users
+            QQOperaterService._save_config(plugin)
             yield event.make_result().message(f"已恢复用户 {target_user_id}")
         else:
             # 恢复当前群
             mute_groups = plugin.config.get("mute_groups", [])
             mute_groups = [m for m in mute_groups if m["group_id"] != group_id]
             plugin.config["mute_groups"] = mute_groups
+            QQOperaterService._save_config(plugin)
             yield event.make_result().message("已恢复本群禁言")
 
     @staticmethod
@@ -1262,19 +1309,26 @@ class QQOperaterService:
             event: 消息事件对象
         """
         import time
+
         current_time = time.time()
 
         # 清理过期的群禁言
+        changed = False
         mute_groups = plugin.config.get("mute_groups", [])
         active_groups = [m for m in mute_groups if m["end_time"] > current_time]
         if len(active_groups) != len(mute_groups):
             plugin.config["mute_groups"] = active_groups
+            changed = True
 
         # 清理过期的用户禁言
         mute_users = plugin.config.get("mute_users", [])
         active_users = [m for m in mute_users if m["end_time"] > current_time]
         if len(active_users) != len(mute_users):
             plugin.config["mute_users"] = active_users
+            changed = True
+
+        if changed:
+            QQOperaterService._save_config(plugin)
 
         result = "当前禁言状态：\n\n"
 
@@ -1361,13 +1415,15 @@ class QQOperaterService:
 
                 try:
                     # 调用 API 获取群信息（包含全员禁言状态）
-                    logger.info(f"[调试] 正在检测群 {group_id} ({group_name}) 的禁言状态...")
-                    group_info = await client.api.call_action(
-                        "get_group_info",
-                        group_id=group_id,
-                        no_cache=True
+                    logger.info(
+                        f"[调试] 正在检测群 {group_id} ({group_name}) 的禁言状态..."
                     )
-                    logger.info(f"[调试] 群 {group_id} 的 get_group_info 原始返回: {group_info}")
+                    group_info = await client.api.call_action(
+                        "get_group_info", group_id=group_id, no_cache=True
+                    )
+                    logger.info(
+                        f"[调试] 群 {group_id} 的 get_group_info 原始返回: {group_info}"
+                    )
 
                     # 检查全员禁言状态
                     group_is_muted = False
@@ -1382,7 +1438,9 @@ class QQOperaterService:
                         # 检查全员禁言字段 group_all_shut（NapCat 扩展字段）
                         # -1 表示全员禁言，0 表示未全员禁言
                         group_all_shut = data.get("group_all_shut")
-                        logger.info(f"[调试] 群 {group_id} group_all_shut={group_all_shut}")
+                        logger.info(
+                            f"[调试] 群 {group_id} group_all_shut={group_all_shut}"
+                        )
 
                         if group_all_shut == -1:
                             group_is_muted = True
@@ -1393,31 +1451,43 @@ class QQOperaterService:
                             "get_group_member_info",
                             group_id=group_id,
                             user_id=int(bot_id),
-                            no_cache=True
+                            no_cache=True,
                         )
-                        logger.info(f"[调试] 群 {group_id} 机器人成员信息: {member_info}")
+                        logger.info(
+                            f"[调试] 群 {group_id} 机器人成员信息: {member_info}"
+                        )
 
                         if isinstance(member_info, dict):
                             member_data = member_info.get("data", member_info)
                             shut_up_timestamp = member_data.get("shut_up_timestamp", 0)
-                            logger.info(f"[调试] 群 {group_id} 机器人 shut_up_timestamp={shut_up_timestamp}")
+                            logger.info(
+                                f"[调试] 群 {group_id} 机器人 shut_up_timestamp={shut_up_timestamp}"
+                            )
 
                             if shut_up_timestamp > current_time:
                                 bot_is_muted = True
                                 bot_mute_end_time = shut_up_timestamp
 
-                    logger.info(f"[调试] 群 {group_id} 检测结果: group_is_muted={group_is_muted}, bot_is_muted={bot_is_muted}")
+                    logger.info(
+                        f"[调试] 群 {group_id} 检测结果: group_is_muted={group_is_muted}, bot_is_muted={bot_is_muted}"
+                    )
 
                     # 如果群被全员禁言或机器人被单独禁言，添加到列表
                     if group_is_muted or bot_is_muted:
-                        muted_groups.append({
-                            "group_id": group_id,
-                            "group_name": group_name,
-                            "group_is_muted": group_is_muted,
-                            "bot_is_muted": bot_is_muted,
-                            "bot_mute_remaining": int(bot_mute_end_time - current_time) if bot_is_muted else 0,
-                            "muted_users": []
-                        })
+                        muted_groups.append(
+                            {
+                                "group_id": group_id,
+                                "group_name": group_name,
+                                "group_is_muted": group_is_muted,
+                                "bot_is_muted": bot_is_muted,
+                                "bot_mute_remaining": int(
+                                    bot_mute_end_time - current_time
+                                )
+                                if bot_is_muted
+                                else 0,
+                                "muted_users": [],
+                            }
+                        )
 
                 except Exception as e:
                     logger.error(f"检测群 {group_id} 禁言状态失败: {e}")
@@ -1433,14 +1503,16 @@ class QQOperaterService:
 
                     # 显示全员禁言状态
                     if group_info.get("group_is_muted"):
-                        result += f"  🔇 全员禁言已开启\n"
+                        result += "  🔇 全员禁言已开启\n"
 
                     # 显示机器人单独禁言状态
                     if group_info.get("bot_is_muted"):
                         result += f"  ⚠️ 机器人被单独禁言，剩余 {group_info['bot_mute_remaining']} 秒\n"
 
                     if group_info["muted_users"]:
-                        result += f"  👥 被禁言用户：{len(group_info['muted_users'])} 人\n"
+                        result += (
+                            f"  👥 被禁言用户：{len(group_info['muted_users'])} 人\n"
+                        )
                         for user in group_info["muted_users"][:5]:  # 最多显示5个用户
                             result += f"    - 用户 {user['user_id']}：剩余 {user['remaining']} 秒\n"
                         if len(group_info["muted_users"]) > 5:
@@ -1452,7 +1524,9 @@ class QQOperaterService:
 
         except Exception as e:
             logger.error(f"获取被禁言群列表失败: {e}")
-            yield event.make_result().message(f"获取失败：{str(e)}\n\n可能原因：\n1. NapCat 不支持 get_group_shut_list API\n2. 权限不足")
+            yield event.make_result().message(
+                f"获取失败：{str(e)}\n\n可能原因：\n1. NapCat 不支持 get_group_shut_list API\n2. 权限不足"
+            )
 
     @staticmethod
     async def handle_leave_muted_groups(plugin, event: AstrMessageEvent):
@@ -1515,9 +1589,7 @@ class QQOperaterService:
 
                     # 获取群信息
                     group_info = await client.api.call_action(
-                        "get_group_info",
-                        group_id=group_id,
-                        no_cache=True
+                        "get_group_info", group_id=group_id, no_cache=True
                     )
 
                     if isinstance(group_info, dict):
@@ -1534,7 +1606,7 @@ class QQOperaterService:
                             "get_group_member_info",
                             group_id=group_id,
                             user_id=int(bot_id),
-                            no_cache=True
+                            no_cache=True,
                         )
 
                         if isinstance(member_info, dict):
@@ -1552,24 +1624,32 @@ class QQOperaterService:
                         if bot_is_muted:
                             reason.append("机器人被单独禁言")
 
-                        logger.info(f"尝试退出群 {group_id} ({group_name})，原因: {', '.join(reason)}")
+                        logger.info(
+                            f"尝试退出群 {group_id} ({group_name})，原因: {', '.join(reason)}"
+                        )
 
                         try:
                             # 调用退出群 API
-                            await client.api.call_action("set_group_leave", group_id=group_id)
-                            left_groups.append({
-                                "group_id": group_id,
-                                "group_name": group_name,
-                                "reason": reason
-                            })
+                            await client.api.call_action(
+                                "set_group_leave", group_id=group_id
+                            )
+                            left_groups.append(
+                                {
+                                    "group_id": group_id,
+                                    "group_name": group_name,
+                                    "reason": reason,
+                                }
+                            )
                             logger.info(f"成功退出群 {group_id} ({group_name})")
                         except Exception as e:
-                            failed_groups.append({
-                                "group_id": group_id,
-                                "group_name": group_name,
-                                "reason": reason,
-                                "error": str(e)
-                            })
+                            failed_groups.append(
+                                {
+                                    "group_id": group_id,
+                                    "group_name": group_name,
+                                    "reason": reason,
+                                    "error": str(e),
+                                }
+                            )
                             logger.error(f"退出群 {group_id} ({group_name}) 失败: {e}")
 
                 except Exception as e:
@@ -1580,7 +1660,7 @@ class QQOperaterService:
             if not left_groups and not failed_groups:
                 result = "✅ 没有被禁言的群，无需退出\n"
             else:
-                result = f"退出被禁言群操作完成：\n\n"
+                result = "退出被禁言群操作完成：\n\n"
 
                 if left_groups:
                     result += f"✅ 成功退出 {len(left_groups)} 个群：\n"

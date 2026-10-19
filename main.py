@@ -6,11 +6,12 @@ QQ操作插件
 
 import asyncio
 import time
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.core.star import Star
+
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.core.star import Star
 from astrbot.core.star.context import Context
-from astrbot.core.message.components import At
+
 from .qq_operater_service import QQOperaterService
 
 
@@ -40,6 +41,8 @@ class QQOperaterPlugin(Star):
         self.imitate_cache = (
             None  # 存储上一次模仿的信息，用于对比 {avatar_url, nickname, card}
         )
+        # 真实禁言检测缓存，仅保存在内存中，避免写进插件配置
+        self.real_mute_cache = {}
 
     async def initialize(self):
         """插件初始化完成后调用"""
@@ -49,6 +52,18 @@ class QQOperaterPlugin(Star):
         if imitate_target:
             # 启动自动模仿任务
             await self.start_auto_imitate()
+
+    async def terminate(self):
+        """插件卸载/重载时取消后台模仿任务"""
+        if self.imitate_task and not self.imitate_task.done():
+            self.imitate_task.cancel()
+            try:
+                await self.imitate_task
+            except asyncio.CancelledError:
+                pass
+        self.imitate_task = None
+        self.imitate_target = None
+        self.real_mute_cache.clear()
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=100)
     async def on_group_message_mute_filter(self, event: AstrMessageEvent):
@@ -60,28 +75,43 @@ class QQOperaterPlugin(Star):
         if not group_id:
             return
 
+        # 指令消息不参与禁言过滤，否则 /恢复 等指令会被 stop_event 提前终止。
+        # handlers_parsed_params 由 AstrBot 在指令匹配成功后写入。
+        if event.get_extra("handlers_parsed_params", {}):
+            return
+
         sender_id = event.get_sender_id()
         current_time = time.time()
 
-        logger.info(f"消息过滤器：群ID={group_id}, sender_id={sender_id}, 类型={type(sender_id)}")
+        logger.debug(
+            f"消息过滤器：群ID={group_id}, sender_id={sender_id}, 类型={type(sender_id)}"
+        )
 
         # 检查群是否被禁言
         mute_groups = self.config.get("mute_groups", [])
-        logger.info(f"消息过滤器：mute_groups={mute_groups}")
+        logger.debug(f"消息过滤器：mute_groups={mute_groups}")
         for m in mute_groups:
-            logger.info(f"消息过滤器：群对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)})?")
+            logger.debug(
+                f"消息过滤器：群对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)})?"
+            )
             if str(m["group_id"]) == str(group_id) and m["end_time"] > current_time:
-                logger.info(f"消息过滤：群{group_id}处于禁言状态，忽略消息")
+                logger.debug(f"消息过滤：群{group_id}处于禁言状态，忽略消息")
                 event.stop_event()
                 return
 
         # 检查用户是否被禁言
         mute_users = self.config.get("mute_users", [])
-        logger.info(f"消息过滤器：mute_users={mute_users}")
+        logger.debug(f"消息过滤器：mute_users={mute_users}")
         for m in mute_users:
-            logger.info(f"消息过滤器：用户对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)}), user_id={m['user_id']}(类型{type(m['user_id'])}) == {sender_id}(类型{type(sender_id)})?")
-            if str(m["group_id"]) == str(group_id) and str(m["user_id"]) == str(sender_id) and m["end_time"] > current_time:
-                logger.info(f"消息过滤：用户{sender_id}在群{group_id}被禁言，忽略消息")
+            logger.debug(
+                f"消息过滤器：用户对比 group_id={m['group_id']}(类型{type(m['group_id'])}) == {group_id}(类型{type(group_id)}), user_id={m['user_id']}(类型{type(m['user_id'])}) == {sender_id}(类型{type(sender_id)})?"
+            )
+            if (
+                str(m["group_id"]) == str(group_id)
+                and str(m["user_id"]) == str(sender_id)
+                and m["end_time"] > current_time
+            ):
+                logger.debug(f"消息过滤：用户{sender_id}在群{group_id}被禁言，忽略消息")
                 event.stop_event()
                 return
 
@@ -89,7 +119,7 @@ class QQOperaterPlugin(Star):
         if self.config.get("enable_real_mute_check", False):
             # 检查缓存，避免频繁调用 API
             cache_key = f"real_mute_cache_{group_id}"
-            cache_data = self.config.get(cache_key, {})
+            cache_data = self.real_mute_cache.get(cache_key, {})
             cache_time = cache_data.get("time", 0)
             cache_interval = 60  # 缓存 60 秒
 
@@ -97,7 +127,9 @@ class QQOperaterPlugin(Star):
             if current_time - cache_time < cache_interval:
                 muted_users = cache_data.get("muted_users", [])
                 if sender_id in muted_users:
-                    logger.info(f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息")
+                    logger.debug(
+                        f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息"
+                    )
                     event.stop_event()
                     return
             else:
@@ -105,7 +137,9 @@ class QQOperaterPlugin(Star):
                 try:
                     client = await QQOperaterService.get_client(self, event)
                     if client:
-                        shut_list = await client.api.call_action("get_group_shut_list", group_id=group_id)
+                        shut_list = await client.api.call_action(
+                            "get_group_shut_list", group_id=group_id
+                        )
                         muted_users = []
 
                         # 解析禁言列表
@@ -121,14 +155,16 @@ class QQOperaterPlugin(Star):
                                     muted_users.append(user_id)
 
                         # 更新缓存
-                        self.config[cache_key] = {
+                        self.real_mute_cache[cache_key] = {
                             "time": current_time,
-                            "muted_users": muted_users
+                            "muted_users": muted_users,
                         }
 
                         # 检查发送者是否被禁言
                         if sender_id in muted_users:
-                            logger.info(f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息")
+                            logger.debug(
+                                f"消息过滤（真实禁言）：用户{sender_id}在群{group_id}被真实禁言，忽略消息"
+                            )
                             event.stop_event()
                             return
                 except Exception as e:
@@ -388,6 +424,3 @@ async def leave_muted_groups(self, event: AstrMessageEvent):
     async for result in QQOperaterService.handle_leave_muted_groups(self, event):
         yield result
     event.stop_event()
-
-
-
