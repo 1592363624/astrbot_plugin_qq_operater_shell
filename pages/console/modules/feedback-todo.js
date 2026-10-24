@@ -69,20 +69,21 @@ export const feedbackTodoModule = {
     const batchDeleteBtn = document.createElement("button");
     batchDeleteBtn.className = "btn danger";
     batchDeleteBtn.textContent = "删除选中";
-    batchDeleteBtn.addEventListener("click", async () => {
+    batchDeleteBtn.addEventListener("click", () => {
       const ids = [...state.selected];
       if (!ids.length) return;
-      if (!confirm(`确定删除选中的 ${ids.length} 条待办吗？此操作不可恢复。`)) return;
-      try {
-        const data = await bridge.apiPost("feedback_todo/delete", { ids });
-        setStatus(
-          `已删除 ${data.deleted.length} 条待办` +
-            (data.missing?.length ? `，${data.missing.length} 条不存在` : ""),
-        );
-        await load();
-      } catch (e) {
-        setStatus(`批量删除失败：${e.message}`, true);
-      }
+      twoStepConfirm(batchDeleteBtn, `确认删除${ids.length}条？`, async () => {
+        try {
+          const data = await bridge.apiPost("feedback_todo/delete", { ids });
+          setStatus(
+            `已删除 ${data.deleted.length} 条待办` +
+              (data.missing?.length ? `，${data.missing.length} 条不存在` : ""),
+          );
+          await load();
+        } catch (e) {
+          setStatus(`批量删除失败：${e.message}`, true);
+        }
+      });
     });
     batchBar.appendChild(selectedCount);
     batchBar.appendChild(batchDeleteBtn);
@@ -146,6 +147,36 @@ export const feedbackTodoModule = {
     function fmtTime(ts) {
       if (!ts) return "";
       return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false });
+    }
+
+    // 页面运行在受限 iframe（无 allow-modals），window.confirm 会被静默拦截，
+    // 因此危险操作使用两段式按钮确认：第一次点击进入待确认状态，3秒内再点执行
+    function twoStepConfirm(btn, confirmText, action) {
+      if (btn.dataset.armed === "1") {
+        clearTimeout(Number(btn.dataset.timer || 0));
+        const label = btn.dataset.label || btn.textContent;
+        delete btn.dataset.armed;
+        delete btn.dataset.timer;
+        delete btn.dataset.label;
+        btn.classList.remove("armed");
+        btn.textContent = label;
+        action();
+        return;
+      }
+      btn.dataset.armed = "1";
+      btn.dataset.label = btn.textContent;
+      btn.textContent = confirmText;
+      btn.classList.add("armed");
+      btn.dataset.timer = String(
+        setTimeout(() => {
+          const original = btn.dataset.label;
+          delete btn.dataset.armed;
+          delete btn.dataset.timer;
+          delete btn.dataset.label;
+          btn.classList.remove("armed");
+          if (original) btn.textContent = original;
+        }, 3000),
+      );
     }
 
     function buildCard(item) {
@@ -316,17 +347,18 @@ export const feedbackTodoModule = {
       const delBtn = document.createElement("button");
       delBtn.className = "btn danger";
       delBtn.textContent = "删除";
-      delBtn.addEventListener("click", async () => {
-        if (!confirm(`确定删除待办 #${item.id} 吗？此操作不可恢复。`)) return;
-        delBtn.disabled = true;
-        try {
-          await bridge.apiPost("feedback_todo/delete", { ids: [item.id] });
-          setStatus(`待办 #${item.id} 已删除`);
-          await load();
-        } catch (e) {
-          setStatus(`删除失败：${e.message}`, true);
-          delBtn.disabled = false;
-        }
+      delBtn.addEventListener("click", () => {
+        twoStepConfirm(delBtn, "确认删除？", async () => {
+          delBtn.disabled = true;
+          try {
+            await bridge.apiPost("feedback_todo/delete", { ids: [item.id] });
+            setStatus(`待办 #${item.id} 已删除`);
+            await load();
+          } catch (e) {
+            setStatus(`删除失败：${e.message}`, true);
+            delBtn.disabled = false;
+          }
+        });
       });
       actions.appendChild(delBtn);
       card.appendChild(actions);
@@ -340,29 +372,28 @@ export const feedbackTodoModule = {
         const doneBtn = document.createElement("button");
         doneBtn.className = "btn primary";
         doneBtn.textContent = "完成并发送回复";
-        doneBtn.addEventListener("click", async () => {
+        doneBtn.addEventListener("click", () => {
           const result = resultBox.value.trim();
           if (!result) {
             setStatus("请先填写处理结果", true);
             return;
           }
-          const target = `${sourceText(item)} · ${item.reporter_name || "?"}(${item.reporter_id || "?"})`;
-          if (!confirm(`将把处理结果引用回复给：${target}\n确认完成待办 #${item.id} 吗？`))
-            return;
-          doneBtn.disabled = true;
-          doneBtn.textContent = "发送中…";
-          try {
-            const data = await bridge.apiPost("feedback_todo/complete", {
-              id: item.id,
-              result,
-            });
-            setStatus(data.message || `待办 #${item.id} 已完成`);
-            await load();
-          } catch (e) {
-            setStatus(`完成失败：${e.message}`, true);
-            doneBtn.disabled = false;
-            doneBtn.textContent = "完成并发送回复";
-          }
+          twoStepConfirm(doneBtn, "确认发送？", async () => {
+            doneBtn.disabled = true;
+            doneBtn.textContent = "发送中…";
+            try {
+              const data = await bridge.apiPost("feedback_todo/complete", {
+                id: item.id,
+                result,
+              });
+              setStatus(data.message || `待办 #${item.id} 已完成`);
+              await load();
+            } catch (e) {
+              setStatus(`完成失败：${e.message}`, true);
+              doneBtn.disabled = false;
+              doneBtn.textContent = "完成并发送回复";
+            }
+          });
         });
         area.appendChild(resultBox);
         area.appendChild(doneBtn);

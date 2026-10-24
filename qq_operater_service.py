@@ -6,6 +6,7 @@ QQ操作服务模块
 - 客户端获取方法
 - 命令处理逻辑（获取群列表、获取群成员信息）
 - 模仿功能（模仿指定用户的头像和群名片）
+- 潜水成员清理（按最先进群且最久未发言排序，预览与批量清退）
 """
 
 import asyncio
@@ -1682,3 +1683,435 @@ class QQOperaterService:
         except Exception as e:
             logger.error(f"退出被禁言群失败: {e}")
             yield event.make_result().message(f"操作失败：{str(e)}")
+
+    # ==================== 潜水成员清理功能 ====================
+
+    # 单次清退潜水成员的数量上限，防止误操作导致大规模踢人
+    MAX_KICK_COUNT = 50
+
+    @staticmethod
+    async def _get_login_bot_id(client):
+        """通过 get_login_info 获取机器人自身QQ号
+
+        仅供潜水清理排除自身使用，失败返回 None（不影响主流程）
+
+        Args:
+            client: QQ客户端实例
+
+        Returns:
+            str: 机器人QQ号字符串，获取失败返回None
+        """
+        try:
+            login_info = await client.api.call_action("get_login_info")
+            if isinstance(login_info, dict):
+                if login_info.get("status") == "ok" and "data" in login_info:
+                    login_info = login_info["data"]
+                bot_id = login_info.get("user_id") or login_info.get("uin")
+                return str(bot_id) if bot_id else None
+        except Exception as e:
+            logger.error(f"获取机器人ID失败: {e}")
+        return None
+
+    @staticmethod
+    def _parse_silent_args(event: AstrMessageEvent, default_limit=10):
+        """解析潜水名单/清退潜水指令的数字参数
+
+        参数顺序（全部为纯数字）：
+        - 群聊中：[数量] [静默天数] [群号]，群号缺省为当前群
+        - 私聊中：[群号] / [数量] [群号] / [数量] [静默天数] [群号]（最后一个数字视为群号）
+
+        静默天数为 0 表示不过滤发言时间；大于 0 时只保留超过 N 天未发言
+        及从未发言的成员（从未发言者始终视为符合条件）。
+
+        Returns:
+            tuple: (limit, silent_days, group_id, error)
+            error 不为 None 时表示参数有误，此时其余三项为 None
+        """
+        args = event.message_str.split()[1:]
+        current_group = event.get_group_id()
+        limit = default_limit
+        silent_days = 0
+        group_id = int(current_group) if current_group else None
+
+        nums = []
+        for arg in args:
+            if not arg.isdigit():
+                return None, None, None, f"参数必须是数字，收到：{arg}"
+            nums.append(int(arg))
+
+        if current_group:
+            if len(nums) > 3:
+                return None, None, None, "参数过多，格式：[数量] [静默天数] [群号]"
+            if len(nums) >= 1:
+                limit = nums[0]
+            if len(nums) >= 2:
+                silent_days = nums[1]
+            if len(nums) >= 3:
+                group_id = nums[2]
+        else:
+            if not nums:
+                return None, None, None, "私聊使用请提供群号，格式：[群号] 或 [数量] [群号]"
+            if len(nums) > 3:
+                return None, None, None, "参数过多，格式：[数量] [静默天数] [群号]"
+            group_id = nums[-1]
+            if len(nums) >= 2:
+                limit = nums[0]
+            if len(nums) == 3:
+                silent_days = nums[1]
+
+        if not 1 <= limit <= QQOperaterService.MAX_KICK_COUNT:
+            return None, None, None, (
+                f"数量必须在 1~{QQOperaterService.MAX_KICK_COUNT} 之间"
+            )
+        if silent_days < 0:
+            return None, None, None, "静默天数不能为负数"
+        return limit, silent_days, group_id, None
+
+    @staticmethod
+    async def _get_silent_members(client, group_id, limit, silent_days=0, exclude_ids=None):
+        """获取"最先进群且最久未发言"排序的潜水成员候选列表
+
+        排序规则（均为升序）：
+        1. 按最后发言时间：从未发言（last_sent_time=0）的成员排在最前
+        2. 同组内按入群时间：越早进群越靠前
+
+        自动排除群主、管理员、机器人自身以及 exclude_ids 中的成员
+        （指令发送者被踢出后将无法回复确认，也一并排除）。
+
+        Args:
+            client: QQ客户端实例
+            group_id: 群号
+            limit: 返回数量上限
+            silent_days: 静默天数过滤，0 表示不过滤
+            exclude_ids: 需要额外排除的QQ号列表
+
+        Returns:
+            tuple: (members, error) members 为排序后的候选列表（最多 limit 个）
+        """
+        try:
+            ret = await client.api.call_action(
+                "get_group_member_list", group_id=group_id, no_cache=True
+            )
+        except Exception as e:
+            logger.error(f"获取群 {group_id} 成员列表失败: {e}")
+            return None, f"获取群成员列表失败：{e}"
+
+        if isinstance(ret, dict) and "data" in ret:
+            ret = ret["data"]
+        if not isinstance(ret, list):
+            return None, "获取群成员列表失败：协议端返回格式异常"
+
+        exclude = {str(i) for i in (exclude_ids or [])}
+        bot_id = await QQOperaterService._get_login_bot_id(client)
+        if bot_id:
+            exclude.add(bot_id)
+
+        threshold = time.time() - silent_days * 86400 if silent_days > 0 else None
+        candidates = []
+        for m in ret:
+            if not isinstance(m, dict):
+                continue
+            if m.get("role") in ("owner", "admin"):
+                continue
+            user_id = m.get("user_id")
+            if user_id is None or str(user_id) in exclude:
+                continue
+            last_sent = m.get("last_sent_time") or 0
+            # 指定静默天数时，近期发过言的成员跳过（从未发言者始终保留）
+            if threshold is not None and last_sent and last_sent > threshold:
+                continue
+            candidates.append(
+                {
+                    "user_id": user_id,
+                    "nickname": m.get("nickname") or "",
+                    "card": m.get("card") or "",
+                    "join_time": m.get("join_time") or 0,
+                    "last_sent_time": last_sent,
+                }
+            )
+
+        candidates.sort(key=lambda x: (x["last_sent_time"], x["join_time"]))
+        return candidates[:limit], None
+
+    @staticmethod
+    def _format_silent_members(members, silent_days, show_limit=None):
+        """把潜水成员候选列表格式化为消息文本
+
+        Args:
+            members: _get_silent_members 返回的候选列表
+            silent_days: 本次使用的静默天数过滤（用于提示）
+            show_limit: 名单最多逐条显示的人数，None 表示全部显示
+
+        Returns:
+            str: 可直接发送的名单文本
+        """
+        now = time.time()
+        if silent_days > 0:
+            header = f"潜水成员（按最先进群且最久未发言排序，仅统计 {silent_days} 天以上未发言及从未发言者）：\n"
+        else:
+            header = "潜水成员（按最先进群且最久未发言排序）：\n"
+
+        shown = members if show_limit is None else members[:show_limit]
+        lines = [header]
+        for i, m in enumerate(shown, 1):
+            name = m["card"] or m["nickname"] or str(m["user_id"])
+            if m["last_sent_time"]:
+                days_ago = max(int((now - m["last_sent_time"]) / 86400), 1)
+                speak = (
+                    f"最后发言 {QQOperaterService.format_timestamp(m['last_sent_time'])}"
+                    f"（{days_ago} 天前）"
+                )
+            else:
+                speak = "从未发言"
+            lines.append(
+                f"{i}. {name}（{m['user_id']}）\n"
+                f"   进群 {QQOperaterService.format_timestamp(m['join_time'])} | {speak}"
+            )
+        if show_limit is not None and len(members) > show_limit:
+            lines.append(f"……其余 {len(members) - show_limit} 人不逐一列出，共 {len(members)} 人")
+        return "\n".join(lines)
+
+    @staticmethod
+    async def handle_silent_member_list(plugin, event: AstrMessageEvent):
+        """处理查看潜水成员名单指令的逻辑（只预览，不踢人）
+
+        使用示例：
+        /潜水名单
+        /潜水名单 20
+        /潜水名单 20 30 123456789
+        """
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("当前平台不支持此命令")
+            return
+
+        limit, silent_days, group_id, err = QQOperaterService._parse_silent_args(event)
+        if err:
+            yield event.make_result().message(err)
+            return
+
+        members, err = await QQOperaterService._get_silent_members(
+            client, group_id, limit, silent_days, exclude_ids=[event.get_sender_id()]
+        )
+        if err:
+            yield event.make_result().message(err)
+            return
+        if not members:
+            yield event.make_result().message("✅ 没有符合条件的潜水成员")
+            return
+
+        yield event.make_result().message(
+            QQOperaterService._format_silent_members(members, silent_days)
+        )
+
+    @staticmethod
+    async def handle_kick_silent(plugin, event: AstrMessageEvent):
+        """处理批量清退潜水成员指令的逻辑
+
+        使用示例：
+        /清退潜水 10
+        /清退潜水 10 30
+        /清退潜水 10 30 123456789
+
+        踢人不可逆，执行前先展示完整名单，管理员在 60 秒内
+        回复「确认」才执行踢出，回复「取消」放弃。
+        """
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("当前平台不支持此命令")
+            return
+
+        limit, silent_days, group_id, err = QQOperaterService._parse_silent_args(event)
+        if err:
+            yield event.make_result().message(err)
+            return
+
+        members, err = await QQOperaterService._get_silent_members(
+            client, group_id, limit, silent_days, exclude_ids=[event.get_sender_id()]
+        )
+        if err:
+            yield event.make_result().message(err)
+            return
+        if not members:
+            yield event.make_result().message("✅ 没有符合条件的潜水成员，无需清退")
+            return
+
+        async for result in QQOperaterService._kick_with_confirmation(
+            plugin, event, client, group_id, members, silent_days
+        ):
+            yield result
+
+    @staticmethod
+    def _parse_inactive_args(event: AstrMessageEvent):
+        """解析踢出潜水指令的数字参数：[静默天数] [数量] [群号]
+
+        参数顺序（全部为纯数字）：
+        - 群聊中：[天数] / [天数] [数量] / [天数] [数量] [群号]，群号缺省为当前群
+        - 私聊中：[天数] [群号] / [天数] [数量] [群号]（最后一个数字视为群号）
+
+        数量不指定时踢出所有符合条件的成员（不设上限，由名单确认环节把关）。
+
+        Returns:
+            tuple: (silent_days, limit, group_id, error)
+            error 不为 None 时表示参数有误，此时其余三项为 None
+        """
+        args = event.message_str.split()[1:]
+        current_group = event.get_group_id()
+        silent_days = 0
+        limit = None
+        group_id = int(current_group) if current_group else None
+
+        nums = []
+        for arg in args:
+            if not arg.isdigit():
+                return None, None, None, f"参数必须是数字，收到：{arg}"
+            nums.append(int(arg))
+
+        if current_group:
+            if not 1 <= len(nums) <= 3:
+                return None, None, None, "格式：[天数] 或 [天数] [数量] 或 [天数] [数量] [群号]"
+            silent_days = nums[0]
+            if len(nums) >= 2:
+                limit = nums[1]
+            if len(nums) >= 3:
+                group_id = nums[2]
+        else:
+            if not 2 <= len(nums) <= 3:
+                return None, None, None, "私聊格式：[天数] [群号] 或 [天数] [数量] [群号]"
+            silent_days = nums[0]
+            if len(nums) == 2:
+                group_id = nums[1]
+            else:
+                limit = nums[1]
+                group_id = nums[2]
+
+        if silent_days < 1:
+            return None, None, None, "天数必须大于 0（0 会匹配全群普通成员）"
+        if limit is not None and not 1 <= limit <= QQOperaterService.MAX_KICK_COUNT:
+            return None, None, None, (
+                f"数量必须在 1~{QQOperaterService.MAX_KICK_COUNT} 之间，"
+                "不指定则踢出全部符合条件的成员"
+            )
+        return silent_days, limit, group_id, None
+
+    @staticmethod
+    async def handle_kick_inactive(plugin, event: AstrMessageEvent):
+        """处理按天数批量踢出未发言成员指令的逻辑
+
+        使用示例：
+        /踢出潜水 30
+        /踢出潜水 30 10
+        /踢出潜水 30 10 123456789
+
+        踢出所有超过 N 天未发言（含从未发言）的成员，数量不指定时不设上限。
+        """
+        client = await QQOperaterService.get_client(plugin, event)
+        if not client:
+            yield event.make_result().message("当前平台不支持此命令")
+            return
+
+        silent_days, limit, group_id, err = QQOperaterService._parse_inactive_args(event)
+        if err:
+            yield event.make_result().message(err)
+            return
+
+        members, err = await QQOperaterService._get_silent_members(
+            client, group_id, limit, silent_days, exclude_ids=[event.get_sender_id()]
+        )
+        if err:
+            yield event.make_result().message(err)
+            return
+        if not members:
+            yield event.make_result().message(
+                f"✅ 群 {group_id} 没有 {silent_days} 天以上未发言的成员，无需清退"
+            )
+            return
+
+        async for result in QQOperaterService._kick_with_confirmation(
+            plugin, event, client, group_id, members, silent_days
+        ):
+            yield result
+
+    @staticmethod
+    async def _kick_with_confirmation(
+        plugin, event: AstrMessageEvent, client, group_id, members, silent_days
+    ):
+        """展示踢出名单，管理员确认后批量执行踢出（清退潜水/踢出潜水共用）
+
+        名单超过 30 人时只逐条列出前 30 人；管理员在 60 秒内回复「确认」执行，
+        回复「取消」放弃。
+        """
+        preview = QQOperaterService._format_silent_members(
+            members, silent_days, show_limit=30
+        )
+        yield event.make_result().message(
+            f"⚠️ 即将清退群 {group_id} 以下 {len(members)} 名成员：\n\n"
+            f"{preview}\n\n"
+            f"回复「确认」执行踢出，回复「取消」放弃（60 秒内有效）"
+        )
+
+        # 踢人间隔复用"消息发送间隔"配置，限制在 0.1~60 秒，避免操作过快触发风控
+        try:
+            kick_interval = float(plugin.config.get("send_interval", 1))
+        except (TypeError, ValueError):
+            kick_interval = 1.0
+        kick_interval = max(0.1, min(kick_interval, 60.0))
+
+        @session_waiter(timeout=60, record_history_chains=False)
+        async def kick_confirm_waiter(
+            controller: SessionController, confirm_event: AstrMessageEvent
+        ):
+            reply = confirm_event.message_str.strip()
+            if reply in ["确认", "确定", "是", "Y", "y", "yes", "YES"]:
+                # 先结束会话，踢出过程中收到的消息不再进入本会话
+                controller.stop()
+                await confirm_event.send(
+                    confirm_event.make_result().message(
+                        f"开始批量踢出 {len(members)} 名成员…"
+                    )
+                )
+                kicked = []
+                failed = []
+                for i, m in enumerate(members):
+                    try:
+                        await client.api.call_action(
+                            "set_group_kick",
+                            group_id=group_id,
+                            user_id=m["user_id"],
+                            # 不拒绝被踢成员再次申请加群，误伤时可自行重新入群
+                            reject_add_request=False,
+                        )
+                        kicked.append(m)
+                    except Exception as e:
+                        failed.append((m, str(e)))
+                        logger.error(f"清退潜水：踢出成员 {m['user_id']} 失败: {e}")
+                    if i < len(members) - 1:
+                        await asyncio.sleep(kick_interval)
+
+                summary = f"清退完成：成功踢出 {len(kicked)} 人，失败 {len(failed)} 人"
+                if failed:
+                    summary += "\n失败名单：\n"
+                    for m, e in failed:
+                        summary += (
+                            f"  - {m['card'] or m['nickname'] or m['user_id']}"
+                            f"（{m['user_id']}）：{e}\n"
+                        )
+                await confirm_event.send(confirm_event.make_result().message(summary))
+            elif reply in ["取消", "否", "N", "n", "no", "NO"]:
+                controller.stop()
+                await confirm_event.send(
+                    confirm_event.make_result().message("已取消清退操作")
+                )
+            else:
+                await confirm_event.send(
+                    confirm_event.make_result().message("请回复「确认」或「取消」")
+                )
+                controller.keep(timeout=60, reset_timeout=True)
+
+        try:
+            await kick_confirm_waiter(event)
+        except TimeoutError:
+            yield event.make_result().message("确认超时，已取消清退操作")
+        except Exception as e:
+            logger.error(f"清退潜水会话处理失败: {e}")
+            yield event.make_result().message(f"清退操作失败：{str(e)}")

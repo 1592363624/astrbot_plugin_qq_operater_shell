@@ -531,6 +531,51 @@ async def leave_muted_groups(self, event: AstrMessageEvent):
     event.stop_event()
 
 
+# ==================== 潜水成员清退指令 ====================
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("潜水名单")
+async def silent_member_list(self, event: AstrMessageEvent):
+    """查看潜水成员名单（按最先进群且最久未发言排序，只预览不踢人）
+    使用示例：
+    /潜水名单
+    /潜水名单 20
+    /潜水名单 20 30 123456789
+    """
+    async for result in QQOperaterService.handle_silent_member_list(self, event):
+        yield result
+    event.stop_event()
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("清退潜水")
+async def kick_silent_members(self, event: AstrMessageEvent):
+    """批量踢出潜水成员（先展示名单，回复「确认」后执行）
+    使用示例：
+    /清退潜水 10
+    /清退潜水 10 30
+    /清退潜水 10 30 123456789
+    """
+    async for result in QQOperaterService.handle_kick_silent(self, event):
+        yield result
+    event.stop_event()
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("踢出潜水")
+async def kick_inactive_members(self, event: AstrMessageEvent):
+    """按天数批量踢出未发言成员（数量不指定则踢出全部符合条件的）
+    使用示例：
+    /踢出潜水 30
+    /踢出潜水 30 10
+    /踢出潜水 30 10 123456789
+    """
+    async for result in QQOperaterService.handle_kick_inactive(self, event):
+        yield result
+    event.stop_event()
+
+
 # ==================== 反馈待办功能指令 ====================
 
 

@@ -209,6 +209,14 @@ body {
   color: var(--danger);
 }
 
+/* 两段式确认的待确认状态（替代被沙箱拦截的 confirm 弹窗） */
+.btn.armed {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+  font-weight: 600;
+}
+
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
