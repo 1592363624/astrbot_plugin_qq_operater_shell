@@ -10,10 +10,6 @@
 
 </div>
 
-## 部分功能展示(有些功能不方便展示)
-<img width="747" height="1022" alt="image" src="https://github.com/user-attachments/assets/dd05e877-c26e-4dca-ba75-184760b37296" />
-
-
 ## 功能说明
 
 本插件仅支持QQ平台（aiocqhttp），提供QQ群管理操作功能。所有命令需要**管理员权限**。
@@ -70,6 +66,10 @@
 
 #### 反馈待办
 收集群友反馈的 Bug 和建议，形成带编号的待办清单，处理完成后自动引用回复报告人。
+
+## 部分功能展示(有些功能不方便展示)
+<img width="747" height="1022" alt="image" src="https://github.com/user-attachments/assets/dd05e877-c26e-4dca-ba75-184760b37296" />
+
 
 **前提配置**（插件配置页）：
 - `todo_owner_qqs`：允许触发"加待办"的QQ号列表（WebUI 列表形式添加）。注意QQ需与机器人登录的QQ不同（机器人自己从手机发的消息不会进入消息事件）。
