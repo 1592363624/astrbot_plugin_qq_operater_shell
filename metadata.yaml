@@ -1,5 +1,5 @@
 name: astrbot_plugin_qq_operater_shell
-display_name: QQ操作插件
+display_name: QQ操作插件, 反馈待办管理,茄子模仿者,一堆奇奇怪怪可能好用，也可能好玩的小功能。
 author: Shell
 version: 1.4.0
 desc: 【仅QQ】调用QQ接口来实现QQ群操作管理等行为
