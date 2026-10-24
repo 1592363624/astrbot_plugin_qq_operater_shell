@@ -42,5 +42,40 @@
         "description": "机器人原始群名片/昵称，停止模仿时恢复使用",
         "type": "string",
         "default": ""
+    },
+    "todo_owner_qqs": {
+        "description": "允许添加待办的QQ号",
+        "type": "list",
+        "items": {
+            "type": "string"
+        },
+        "hint": "列表中的QQ引用（回复）某条消息并发送\"加待办 [原因]\"即可登记反馈待办。需填写与机器人不同的QQ（机器人自发消息不会进入事件），为空则不启用。",
+        "default": []
+    },
+    "todo_context_size": {
+        "description": "上下文抓取条数",
+        "type": "int",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 50,
+        "hint": "登记待办时抓取被引用消息前后聊天记录的条数（前后各N条），依赖 NapCat/Lagrange 的历史消息接口。"
+    },
+    "todo_use_llm": {
+        "description": "启用 AI 摘要",
+        "type": "bool",
+        "default": true,
+        "hint": "登记时调用 AstrBot 当前聊天模型分析聊天记录与截图生成反馈摘要。需多模态模型才能识别图片内容，失败时自动降级为纯文本分析。"
+    },
+    "todo_reply_feedback": {
+        "description": "启用操作反馈",
+        "type": "bool",
+        "default": true,
+        "hint": "登记/完成待办时回复确认消息（含 AI 摘要，方便核对效果）。关闭后成功时静默处理仅记录日志，出错仍会提示。"
+    },
+    "todo_auto_delete_done": {
+        "description": "完成后自动删除",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后待办完成并回复报告人即自动从列表删除（不再保留已完成记录）；关闭则保留，可手动清理（/删除待办 已完成）。"
     }
 }

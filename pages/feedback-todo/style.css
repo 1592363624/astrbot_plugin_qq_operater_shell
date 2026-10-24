@@ -1,0 +1,257 @@
+:root {
+  --bg: #f5f6f8;
+  --card-bg: #ffffff;
+  --text: #1a1a1a;
+  --text-secondary: #666666;
+  --border: #e2e4e8;
+  --accent: #4f6ef7;
+  --accent-text: #ffffff;
+  --danger: #d93025;
+  --success: #188038;
+  --warning: #b06000;
+  --tag-pending-bg: #fef7e0;
+  --tag-pending-text: #b06000;
+  --tag-done-bg: #e6f4ea;
+  --tag-done-text: #188038;
+}
+
+[data-theme="dark"] {
+  --bg: #17181c;
+  --card-bg: #22242a;
+  --text: #e5e6ea;
+  --text-secondary: #9aa0aa;
+  --border: #34363e;
+  --accent: #6b83ff;
+  --accent-text: #ffffff;
+  --danger: #f28b82;
+  --success: #81c995;
+  --warning: #fdd663;
+  --tag-pending-bg: #3d3320;
+  --tag-pending-text: #fdd663;
+  --tag-done-bg: #1e3626;
+  --tag-done-text: #81c995;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+}
+
+.header h1 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.filters {
+  display: flex;
+  gap: 6px;
+}
+
+.filter-btn {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+
+.filter-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.count-info {
+  color: var(--text-secondary);
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.danger {
+  color: var(--danger);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+#batch-bar {
+  display: none;
+}
+
+#batch-bar.visible {
+  display: flex;
+}
+
+.status-line {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.status-line.error {
+  color: var(--danger);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.tag {
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 12px;
+}
+
+.tag.pending {
+  background: var(--tag-pending-bg);
+  color: var(--tag-pending-text);
+}
+
+.tag.done {
+  background: var(--tag-done-bg);
+  color: var(--tag-done-text);
+}
+
+.card-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.field {
+  margin-top: 10px;
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px;
+  font: inherit;
+}
+
+pre.context {
+  margin: 0;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.img-links {
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.complete-area {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.complete-area textarea {
+  flex: 1;
+  min-height: 44px;
+}
+
+details {
+  margin-top: 10px;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.empty {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 40px 0;
+}

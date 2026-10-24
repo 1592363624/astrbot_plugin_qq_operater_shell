@@ -9,10 +9,14 @@ import time
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.web import error_response, json_response, request
 from astrbot.core.star import Star
 from astrbot.core.star.context import Context
 
+from .feedback_todo import FeedbackTodoService
 from .qq_operater_service import QQOperaterService
+
+PLUGIN_NAME = "astrbot_plugin_qq_operater_shell"
 
 
 class MockEvent:
@@ -43,6 +47,93 @@ class QQOperaterPlugin(Star):
         )
         # 真实禁言检测缓存，仅保存在内存中，避免写进插件配置
         self.real_mute_cache = {}
+        # 注册反馈待办管理页面的后端 API
+        self._register_feedback_todo_web_api()
+
+    # ==================== 反馈待办 Web API（供插件页面调用） ====================
+
+    def _register_feedback_todo_web_api(self):
+        """注册反馈待办管理页面的后端 API（页面在 pages/feedback-todo）"""
+        base = f"/{PLUGIN_NAME}/feedback_todo"
+        self.context.register_web_api(
+            f"{base}/list", self.web_todo_list, ["GET"], "反馈待办列表"
+        )
+        self.context.register_web_api(
+            f"{base}/update", self.web_todo_update, ["POST"], "编辑反馈待办"
+        )
+        self.context.register_web_api(
+            f"{base}/resummarize", self.web_todo_resummarize, ["POST"], "重新总结反馈待办"
+        )
+        self.context.register_web_api(
+            f"{base}/delete", self.web_todo_delete, ["POST"], "删除反馈待办"
+        )
+        self.context.register_web_api(
+            f"{base}/complete", self.web_todo_complete, ["POST"], "完成反馈待办"
+        )
+
+    async def web_todo_list(self):
+        """待办列表（按编号倒序）"""
+        store = await FeedbackTodoService._load_store(self)
+        items = sorted(store["items"], key=lambda x: x.get("id", 0), reverse=True)
+        return json_response({"items": items, "next_id": store.get("next_id", 1)})
+
+    async def web_todo_update(self):
+        """编辑待办的 AI 摘要/补充原因"""
+        payload = await request.json(default={})
+        todo_id = payload.get("id")
+        if not isinstance(todo_id, int) or isinstance(todo_id, bool):
+            return error_response("id 必须是整数", status_code=400)
+        fields = {}
+        if "llm_summary" in payload:
+            if not isinstance(payload["llm_summary"], str):
+                return error_response("llm_summary 必须是字符串", status_code=400)
+            fields["llm_summary"] = payload["llm_summary"]
+        if "reason" in payload:
+            if not isinstance(payload["reason"], str):
+                return error_response("reason 必须是字符串", status_code=400)
+            fields["reason"] = payload["reason"]
+        ok, msg = await FeedbackTodoService.update_todo_fields(self, todo_id, fields)
+        if not ok:
+            return error_response(msg, status_code=400)
+        return json_response({"message": msg})
+
+    async def web_todo_resummarize(self):
+        """基于已存储的上下文重新调用 LLM 总结"""
+        payload = await request.json(default={})
+        todo_id = payload.get("id")
+        if not isinstance(todo_id, int) or isinstance(todo_id, bool):
+            return error_response("id 必须是整数", status_code=400)
+        ok, msg = await FeedbackTodoService.resummarize_todo(self, todo_id)
+        if not ok:
+            return error_response(msg, status_code=500)
+        return json_response({"summary": msg})
+
+    async def web_todo_delete(self):
+        """批量删除待办"""
+        payload = await request.json(default={})
+        ids = payload.get("ids")
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)
+        ):
+            return error_response("ids 必须是非空整数数组", status_code=400)
+        deleted, missing = await FeedbackTodoService.delete_todos(self, ids)
+        return json_response({"deleted": deleted, "missing": missing})
+
+    async def web_todo_complete(self):
+        """完成待办并把处理结果引用回复给报告人"""
+        payload = await request.json(default={})
+        todo_id = payload.get("id")
+        result_text = str(payload.get("result") or "").strip()
+        if not isinstance(todo_id, int) or isinstance(todo_id, bool):
+            return error_response("id 必须是整数", status_code=400)
+        if not result_text:
+            return error_response("处理结果不能为空", status_code=400)
+        ok, msg = await FeedbackTodoService.complete_todo(self, todo_id, result_text)
+        if not ok:
+            return error_response(msg, status_code=500)
+        return json_response({"message": msg})
 
     async def initialize(self):
         """插件初始化完成后调用"""
@@ -170,6 +261,20 @@ class QQOperaterPlugin(Star):
                 except Exception as e:
                     logger.error(f"真实禁言检测失败：{e}")
                     # 检测失败不影响正常流程，继续处理消息
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=101)
+    async def on_add_feedback_todo(self, event: AstrMessageEvent):
+        """监听管理员引用消息回复"加待办"添加反馈待办
+
+        使用示例：
+        （引用某条消息）加待办 这里报错了
+        （引用某条消息）/加待办
+
+        优先级高于禁言过滤器(100)，管理员的登记操作不受群禁言影响；
+        未命中触发条件时静默放行，不影响其他消息处理。
+        """
+        async for result in FeedbackTodoService.handle_add_todo_by_quote(self, event):
+            yield result
 
     async def start_auto_imitate(self):
         """启动自动模仿任务"""
@@ -422,5 +527,46 @@ async def leave_muted_groups(self, event: AstrMessageEvent):
     自动检测并退出所有被禁言的群（全员禁言或机器人被单独禁言）
     """
     async for result in QQOperaterService.handle_leave_muted_groups(self, event):
+        yield result
+    event.stop_event()
+
+
+# ==================== 反馈待办功能指令 ====================
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("待办列表")
+async def feedback_todo_list(self, event: AstrMessageEvent):
+    """查看反馈待办列表
+    使用示例：
+    /待办列表
+    /待办列表 全部
+    /待办列表 已完成
+    """
+    async for result in FeedbackTodoService.handle_todo_list(self, event):
+        yield result
+    event.stop_event()
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("完成待办")
+async def feedback_todo_complete(self, event: AstrMessageEvent):
+    """完成待办并把处理结果引用回复给报告人
+    使用示例：
+    /完成待办 3 已修复，新版本已发布
+    """
+    async for result in FeedbackTodoService.handle_complete_todo(self, event):
+        yield result
+    event.stop_event()
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("删除待办")
+async def feedback_todo_delete(self, event: AstrMessageEvent):
+    """删除指定待办
+    使用示例：
+    /删除待办 3
+    """
+    async for result in FeedbackTodoService.handle_delete_todo(self, event):
         yield result
     event.stop_event()
