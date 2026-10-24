@@ -7,8 +7,6 @@
   --accent: #4f6ef7;
   --accent-text: #ffffff;
   --danger: #d93025;
-  --success: #188038;
-  --warning: #b06000;
   --tag-pending-bg: #fef7e0;
   --tag-pending-text: #b06000;
   --tag-done-bg: #e6f4ea;
@@ -24,8 +22,6 @@
   --accent: #6b83ff;
   --accent-text: #ffffff;
   --danger: #f28b82;
-  --success: #81c995;
-  --warning: #fdd663;
   --tag-pending-bg: #3d3320;
   --tag-pending-text: #fdd663;
   --tag-done-bg: #1e3626;
@@ -45,10 +41,119 @@ body {
   font-size: 14px;
 }
 
-.header h1 {
-  margin: 0 0 12px;
-  font-size: 20px;
+/* ---------- 布局：侧边栏 + 内容区 ---------- */
+
+.layout {
+  display: flex;
+  gap: 16px;
+  min-height: calc(100vh - 32px);
 }
+
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-title {
+  margin: 0;
+  font-size: 18px;
+  padding: 0 8px;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.nav-item:hover {
+  background: var(--card-bg);
+  border-color: var(--border);
+}
+
+.nav-item.active {
+  background: var(--card-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-badge {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 10px;
+  min-width: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  text-align: center;
+  line-height: 18px;
+}
+
+.side-footer {
+  margin-top: auto;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.main-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.module-header {
+  margin-bottom: 12px;
+}
+
+.module-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.module-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: auto;
+  }
+
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .side-footer {
+    display: none;
+  }
+}
+
+/* ---------- 通用控件 ---------- */
 
 .toolbar {
   display: flex;
@@ -110,11 +215,11 @@ body {
   color: var(--accent-text);
 }
 
-#batch-bar {
+.batch-bar {
   display: none;
 }
 
-#batch-bar.visible {
+.batch-bar.visible {
   display: flex;
 }
 
@@ -131,6 +236,8 @@ body {
 .status-line.error {
   color: var(--danger);
 }
+
+/* ---------- 待办卡片 ---------- */
 
 .list {
   display: flex;

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>管理中心</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <h1 class="side-title" id="page-title">管理中心</h1>
+        <nav id="nav" class="nav"></nav>
+        <div class="side-footer" id="plugin-name"></div>
+      </aside>
+      <main class="main-content">
+        <div class="module-header">
+          <h2 id="module-title"></h2>
+          <p id="module-desc" class="module-desc"></p>
+        </div>
+        <div id="status-line" class="status-line" hidden></div>
+        <div id="module-root" class="module-root"></div>
+      </main>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
