@@ -10,6 +10,10 @@
 
 </div>
 
+## 部分功能展示(有些功能不方便展示)
+<img width="747" height="1022" alt="image" src="https://github.com/user-attachments/assets/dd05e877-c26e-4dca-ba75-184760b37296" />
+
+
 ## 功能说明
 
 本插件仅支持QQ平台（aiocqhttp），提供QQ群管理操作功能。所有命令需要**管理员权限**。
