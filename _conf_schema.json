@@ -1,81 +1,117 @@
 {
-    "send_interval": {
-        "description": "消息发送间隔（秒）",
-        "type": "int",
-        "default": 1,
-        "minimum": 0.1,
-        "maximum": 60
+    "general": {
+        "description": "基础设置",
+        "type": "object",
+        "hint": "插件通用参数。",
+        "items": {
+            "send_interval": {
+                "description": "消息发送间隔（秒）",
+                "type": "int",
+                "default": 1,
+                "minimum": 0.1,
+                "maximum": 60,
+                "hint": "群发消息、批量操作时两条消息之间的间隔秒数。"
+            }
+        }
     },
     "imitate": {
-        "description": "模仿目标，格式：群号,QQ号，为空则不模仿",
-        "type": "string",
-        "default": ""
-    },
-    "imitate_interval": {
-        "description": "模仿检测时间间隔（分钟）",
-        "type": "int",
-        "default": 10,
-        "minimum": 1,
-        "maximum": 1440
-    },
-    "mute_groups": {
-        "description": "被全局禁言的群列表，格式：[{\"group_id\": 群号, \"end_time\": 禁言结束时间戳}]",
-        "type": "list",
-        "default": []
-    },
-    "mute_users": {
-        "description": "被禁言的用户列表，格式：[{\"group_id\": 群号, \"user_id\": 用户ID, \"end_time\": 禁言结束时间戳}]",
-        "type": "list",
-        "default": []
-    },
-    "enable_real_mute_check": {
-        "description": "启用真实禁言检测（调用 NapCat API 检测 QQ 群真实禁言状态）",
-        "type": "bool",
-        "default": false
-    },
-    "original_avatar": {
-        "description": "机器人原始头像（支持图片路径、URL或Base64），停止模仿时恢复使用",
-        "type": "string",
-        "default": ""
-    },
-    "original_card": {
-        "description": "机器人原始群名片/昵称，停止模仿时恢复使用",
-        "type": "string",
-        "default": ""
-    },
-    "todo_owner_qqs": {
-        "description": "允许添加待办的QQ号",
-        "type": "list",
+        "description": "模仿功能",
+        "type": "object",
+        "hint": "机器人自动模仿指定用户的头像与群名片。",
         "items": {
-            "type": "string"
-        },
-        "hint": "列表中的QQ引用（回复）某条消息并发送\"加待办 [原因]\"即可登记反馈待办。需填写与机器人不同的QQ（机器人自发消息不会进入事件），为空则不启用。",
-        "default": []
+            "imitate": {
+                "description": "模仿目标",
+                "type": "string",
+                "default": "",
+                "hint": "格式：群号,QQ号；为空则不模仿。推荐直接用 /模仿 指令设置，会自动写入此项。"
+            },
+            "imitate_interval": {
+                "description": "检测间隔（分钟）",
+                "type": "int",
+                "default": 10,
+                "minimum": 1,
+                "maximum": 1440,
+                "hint": "每隔多久检查一次目标用户的头像/群名片变化并同步。"
+            },
+            "original_avatar": {
+                "description": "原始头像",
+                "type": "string",
+                "default": "",
+                "hint": "机器人的原始头像（支持图片路径、URL 或 Base64），停止模仿时恢复使用。"
+            },
+            "original_card": {
+                "description": "原始群名片",
+                "type": "string",
+                "default": "",
+                "hint": "机器人的原始群名片/昵称，停止模仿时恢复使用。"
+            }
+        }
     },
-    "todo_context_size": {
-        "description": "上下文抓取条数",
-        "type": "int",
-        "default": 10,
-        "minimum": 1,
-        "maximum": 50,
-        "hint": "登记待办时抓取被引用消息前后聊天记录的条数（前后各N条），依赖 NapCat/Lagrange 的历史消息接口。"
+    "mute": {
+        "description": "禁言管理",
+        "type": "object",
+        "hint": "控制机器人在哪些群、对哪些用户暂时不响应。",
+        "items": {
+            "mute_groups": {
+                "description": "群禁言列表",
+                "type": "list",
+                "default": [],
+                "hint": "由 /闭嘴 指令自动维护，格式 [{\"group_id\": 群号, \"end_time\": 结束时间戳}]，一般无需手动修改。"
+            },
+            "mute_users": {
+                "description": "用户禁言列表",
+                "type": "list",
+                "default": [],
+                "hint": "由 /不回复 指令自动维护，格式 [{\"group_id\": 群号, \"user_id\": 用户ID, \"end_time\": 结束时间戳}]，一般无需手动修改。"
+            },
+            "enable_real_mute_check": {
+                "description": "启用真实禁言检测",
+                "type": "bool",
+                "default": false,
+                "hint": "调用 NapCat API 检测 QQ 群真实禁言状态，被官方禁言的用户消息将被忽略。"
+            }
+        }
     },
-    "todo_use_llm": {
-        "description": "启用 AI 摘要",
-        "type": "bool",
-        "default": true,
-        "hint": "登记时调用 AstrBot 当前聊天模型分析聊天记录与截图生成反馈摘要。需多模态模型才能识别图片内容，失败时自动降级为纯文本分析。"
-    },
-    "todo_reply_feedback": {
-        "description": "启用操作反馈",
-        "type": "bool",
-        "default": true,
-        "hint": "登记/完成待办时回复确认消息（含 AI 摘要，方便核对效果）。关闭后成功时静默处理仅记录日志，出错仍会提示。"
-    },
-    "todo_auto_delete_done": {
-        "description": "完成后自动删除",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后待办完成并回复报告人即自动从列表删除（不再保留已完成记录）；关闭则保留，可手动清理（/删除待办 已完成）。"
+    "feedback_todo": {
+        "description": "反馈待办",
+        "type": "object",
+        "hint": "收集群友反馈的 Bug 与建议，登记、总结、处理、回复报告人。",
+        "items": {
+            "todo_owner_qqs": {
+                "description": "允许添加待办的QQ号",
+                "type": "list",
+                "items": {
+                    "type": "string"
+                },
+                "hint": "列表中的QQ引用（回复）某条消息并发送\"加待办 [原因]\"即可登记反馈待办。需填写与机器人不同的QQ（机器人自发消息不会进入事件），为空则不启用。",
+                "default": []
+            },
+            "todo_context_size": {
+                "description": "上下文抓取条数",
+                "type": "int",
+                "default": 10,
+                "minimum": 1,
+                "maximum": 50,
+                "hint": "登记待办时抓取被引用消息前后聊天记录的条数（前后各N条），依赖 NapCat/Lagrange 的历史消息接口。"
+            },
+            "todo_use_llm": {
+                "description": "启用 AI 摘要",
+                "type": "bool",
+                "default": true,
+                "hint": "登记时调用 AstrBot 当前聊天模型分析聊天记录与截图生成反馈摘要。需多模态模型才能识别图片内容，失败时自动降级为纯文本分析。"
+            },
+            "todo_reply_feedback": {
+                "description": "启用操作反馈",
+                "type": "bool",
+                "default": true,
+                "hint": "登记/完成待办时回复确认消息（含 AI 摘要，方便核对效果）。关闭后成功时静默处理仅记录日志，出错仍会提示。"
+            },
+            "todo_auto_delete_done": {
+                "description": "完成后自动删除",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后待办完成并回复报告人即自动从列表删除（不再保留已完成记录）；关闭则保留，可手动清理（/删除待办 已完成）。"
+            }
+        }
     }
 }

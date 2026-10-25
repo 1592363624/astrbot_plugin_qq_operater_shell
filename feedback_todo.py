@@ -22,7 +22,7 @@ from datetime import datetime
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from .qq_operater_service import QQOperaterService
+from .qq_operater_service import QQOperaterService, get_conf
 
 
 class FeedbackTodoService:
@@ -62,7 +62,7 @@ class FeedbackTodoService:
         配置为字符串列表（WebUI 列表编辑器）；兼容旧版逗号分隔字符串，
         以及列表元素为数字的情况。
         """
-        raw = plugin.config.get("todo_owner_qqs", [])
+        raw = get_conf(plugin, "todo_owner_qqs", [])
         if isinstance(raw, str):
             return [q.strip() for q in raw.replace("，", ",").split(",") if q.strip()]
         if isinstance(raw, list):
@@ -474,7 +474,7 @@ class FeedbackTodoService:
         聊天记录中的截图以 [图片N] 标记，并随请求附送给 LLM 识别图片内容；
         若模型不支持图片等原因导致请求失败，自动降级为纯文本重试。
         """
-        if not plugin.config.get("todo_use_llm", True):
+        if not get_conf(plugin, "todo_use_llm", True):
             return ""
         provider_id = await FeedbackTodoService._resolve_llm_provider_id(plugin, event)
         if not provider_id:
@@ -531,7 +531,7 @@ class FeedbackTodoService:
 
         # 已确认触发，后续无论成败都终止事件传播，避免内容再进入 LLM 等流程
         # todo_reply_feedback 关闭时静默处理，仅通过日志记录结果
-        reply_feedback = plugin.config.get("todo_reply_feedback", True)
+        reply_feedback = get_conf(plugin, "todo_reply_feedback", True)
         if reply_feedback:
             yield event.make_result().message("⏳ 正在抓取聊天上下文并分析反馈内容…")
         try:
@@ -582,7 +582,7 @@ class FeedbackTodoService:
         message_type = "group" if group_id else "private"
 
         try:
-            size = int(plugin.config.get("todo_context_size", 10))
+            size = int(get_conf(plugin, "todo_context_size", 10))
         except (TypeError, ValueError):
             size = 10
         size = max(1, min(size, 50))
@@ -864,7 +864,7 @@ class FeedbackTodoService:
         item["closed_time"] = int(time.time())
         item["result"] = FeedbackTodoService._truncate(result_text, 500)
         auto_deleted = False
-        if plugin.config.get("todo_auto_delete_done", False):
+        if get_conf(plugin, "todo_auto_delete_done", False):
             store["items"] = [
                 i for i in store["items"] if i.get("id") != todo_id
             ]
@@ -942,7 +942,7 @@ class FeedbackTodoService:
         item = next((i for i in store["items"] if i.get("id") == todo_id), None)
         if not item:
             return False, f"未找到待办 #{todo_id}"
-        if not plugin.config.get("todo_use_llm", True):
+        if not get_conf(plugin, "todo_use_llm", True):
             return False, "插件配置已关闭 AI 摘要（todo_use_llm）"
 
         provider_id = await FeedbackTodoService._resolve_llm_provider_id(plugin)
@@ -991,7 +991,7 @@ class FeedbackTodoService:
         ok, msg = await FeedbackTodoService.complete_todo(
             plugin, todo_id, result_text, client
         )
-        if ok and not plugin.config.get("todo_reply_feedback", True):
+        if ok and not get_conf(plugin, "todo_reply_feedback", True):
             logger.info(f"反馈待办：{msg}")
             return
         yield event.make_result().message(msg)

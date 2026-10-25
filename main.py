@@ -14,9 +14,13 @@ from astrbot.core.star import Star
 from astrbot.core.star.context import Context
 
 from .feedback_todo import FeedbackTodoService
-from .qq_operater_service import QQOperaterService
+from .qq_operater_service import QQOperaterService, get_conf, migrate_flat_config
 
 PLUGIN_NAME = "astrbot_plugin_qq_operater_shell"
+
+# 插件模块导入先于 AstrBotConfig 按新 schema 构建配置，此处先把旧版扁平配置
+# 迁移为分板块结构，避免旧值被配置完整性检查当作多余键删除
+migrate_flat_config(PLUGIN_NAME)
 
 
 class MockEvent:
@@ -139,7 +143,7 @@ class QQOperaterPlugin(Star):
         """插件初始化完成后调用"""
         await super().initialize()
         # 检查配置中是否有模仿目标
-        imitate_target = self.config.get("imitate", "")
+        imitate_target = get_conf(self, "imitate", "")
         if imitate_target:
             # 启动自动模仿任务
             await self.start_auto_imitate()
@@ -179,7 +183,7 @@ class QQOperaterPlugin(Star):
         )
 
         # 检查群是否被禁言
-        mute_groups = self.config.get("mute_groups", [])
+        mute_groups = get_conf(self, "mute_groups", [])
         logger.debug(f"消息过滤器：mute_groups={mute_groups}")
         for m in mute_groups:
             logger.debug(
@@ -191,7 +195,7 @@ class QQOperaterPlugin(Star):
                 return
 
         # 检查用户是否被禁言
-        mute_users = self.config.get("mute_users", [])
+        mute_users = get_conf(self, "mute_users", [])
         logger.debug(f"消息过滤器：mute_users={mute_users}")
         for m in mute_users:
             logger.debug(
@@ -207,7 +211,7 @@ class QQOperaterPlugin(Star):
                 return
 
         # 检查是否启用真实禁言检测
-        if self.config.get("enable_real_mute_check", False):
+        if get_conf(self, "enable_real_mute_check", False):
             # 检查缓存，避免频繁调用 API
             cache_key = f"real_mute_cache_{group_id}"
             cache_data = self.real_mute_cache.get(cache_key, {})
@@ -290,7 +294,7 @@ class QQOperaterPlugin(Star):
         if client:
             try:
                 # 解析配置中的模仿目标：群号,QQ号
-                imitate_config = self.config.get("imitate", "").strip()
+                imitate_config = get_conf(self, "imitate", "").strip()
                 if not imitate_config:
                     logger.info("配置为空, 不启动自动模仿任务")
                     return

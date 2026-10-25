@@ -25,6 +25,91 @@ from astrbot.core.utils.session_waiter import (
 )
 
 
+# 配置按功能分板块（object 嵌套）存放：板块键 -> 该板块包含的扁平配置键。
+# 代码读写配置一律通过 get_conf/set_conf，避免各处硬编码嵌套路径。
+CONFIG_SECTIONS = {
+    "general": ["send_interval"],
+    "imitate": ["imitate", "imitate_interval", "original_avatar", "original_card"],
+    "mute": ["mute_groups", "mute_users", "enable_real_mute_check"],
+    "feedback_todo": [
+        "todo_owner_qqs",
+        "todo_context_size",
+        "todo_use_llm",
+        "todo_reply_feedback",
+        "todo_auto_delete_done",
+    ],
+}
+
+FLAT_KEY_TO_SECTION = {
+    key: section for section, keys in CONFIG_SECTIONS.items() for key in keys
+}
+
+
+def get_conf(plugin, key, default=None):
+    """按板块映射读取插件配置项"""
+    section = FLAT_KEY_TO_SECTION.get(key)
+    if section:
+        data = plugin.config.get(section)
+        if isinstance(data, dict) and key in data:
+            return data[key]
+        return default
+    return plugin.config.get(key, default)
+
+
+def set_conf(plugin, key, value):
+    """按板块映射写入插件配置项（写入后需自行保存配置）"""
+    section = FLAT_KEY_TO_SECTION.get(key)
+    if section:
+        plugin.config.setdefault(section, {})[key] = value
+    else:
+        plugin.config[key] = value
+
+
+def migrate_flat_config(plugin_name):
+    """把旧版扁平配置键迁移为分板块结构
+
+    插件模块的导入先于 AstrBotConfig 按新 schema 构建配置，因此在导入期
+    直接改写配置文件即可保住旧值；否则旧扁平键会被配置完整性检查当作
+    多余键删除。找不到配置文件（首次安装）时静默跳过。
+    """
+    import json
+    import os
+
+    from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+    path = os.path.join(
+        get_astrbot_data_path(), "config", f"{plugin_name}_config.json"
+    )
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            conf = json.load(f)
+        if not isinstance(conf, dict):
+            return
+        changed = False
+        for key, section in FLAT_KEY_TO_SECTION.items():
+            if key not in conf:
+                continue
+            # 板块键与配置键同名（如 imitate）时，顶层的 dict 是板块数据而非旧扁平值
+            if key in CONFIG_SECTIONS and isinstance(conf[key], dict):
+                continue
+            value = conf.pop(key)
+            section_data = conf.setdefault(section, {})
+            if key not in section_data:
+                section_data[key] = value
+            changed = True
+        if changed:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(conf, f, ensure_ascii=False, indent=4)
+            logger.info(f"已将插件 {plugin_name} 的旧版扁平配置迁移为分板块结构")
+    except Exception as e:
+        logger.warning(
+            f"迁移插件 {plugin_name} 旧版配置失败（相关项将使用默认值）: {e}"
+        )
+
+
+
 class QQOperaterService:
     """QQ操作服务类，处理插件的核心逻辑"""
 
@@ -229,7 +314,7 @@ class QQOperaterService:
             plugin.imitate_target = None
 
         plugin.imitate_cache = None
-        plugin.config["imitate"] = ""
+        set_conf(plugin, "imitate", "")
         QQOperaterService._save_config(plugin)
 
     @staticmethod
@@ -243,7 +328,7 @@ class QQOperaterService:
             user_id: 用户ID
         """
         # 保存目标信息到配置，格式：群号,QQ号
-        plugin.config["imitate"] = f"{group_id},{user_id}"
+        set_conf(plugin, "imitate", f"{group_id},{user_id}")
         QQOperaterService._save_config(plugin)
 
         # 存储目标信息
@@ -273,7 +358,7 @@ class QQOperaterService:
         # 发送替换成功消息
         await event.send(
             event.make_result().message(
-                f"已成功替换模仿目标，开始模仿用户 {user_id}，每 {plugin.config.get('imitate_interval', 10)} 分钟更新一次"
+                f"已成功替换模仿目标，开始模仿用户 {user_id}，每 {get_conf(plugin, 'imitate_interval', 10)} 分钟更新一次"
             )
         )
 
@@ -289,7 +374,7 @@ class QQOperaterService:
         has_existing_target = False
         existing_target_info = ""
 
-        config_imitate_target = plugin.config.get("imitate", "")
+        config_imitate_target = get_conf(plugin, "imitate", "")
         if config_imitate_target:
             has_existing_target = True
             existing_target_info = config_imitate_target
@@ -377,7 +462,7 @@ class QQOperaterService:
                 plugin, event, group_id, new_target_user_id
             )
             yield event.make_result().message(
-                f"开始模仿用户 {new_target_user_id}，每 {plugin.config.get('imitate_interval', 10)} 分钟更新一次"
+                f"开始模仿用户 {new_target_user_id}，每 {get_conf(plugin, 'imitate_interval', 10)} 分钟更新一次"
             )
 
     @staticmethod
@@ -406,7 +491,7 @@ class QQOperaterService:
         restore_results = []
 
         # 恢复原始头像
-        original_avatar = plugin.config.get("original_avatar", "")
+        original_avatar = get_conf(plugin, "original_avatar", "")
         if original_avatar:
             try:
                 await QQOperaterService._update_bot_avatar(client, original_avatar)
@@ -415,7 +500,7 @@ class QQOperaterService:
                 logger.error(f"恢复原始头像失败: {e}")
 
         # 恢复原始群名片
-        original_card = plugin.config.get("original_card", "")
+        original_card = get_conf(plugin, "original_card", "")
         if original_card and imitate_group_id:
             try:
                 bot_id = await QQOperaterService._get_bot_id(client, event)
@@ -912,7 +997,7 @@ class QQOperaterService:
                             f"模仿监控：目标用户 {user_id} 没有昵称或群名片，跳过此次更新"
                         )
                         await asyncio.sleep(
-                            plugin.config.get("imitate_interval", 10) * 60
+                            get_conf(plugin, "imitate_interval", 10) * 60
                         )
                         continue
 
@@ -932,7 +1017,7 @@ class QQOperaterService:
                             f"模仿监控：目标用户 {user_id} 头像下载失败，跳过此次更新"
                         )
                         await asyncio.sleep(
-                            plugin.config.get("imitate_interval", 10) * 60
+                            get_conf(plugin, "imitate_interval", 10) * 60
                         )
                         continue
 
@@ -946,7 +1031,7 @@ class QQOperaterService:
                             f"模仿监控：目标用户 {user_id} 昵称、群名片和头像均无变化，跳过更新"
                         )
                         await asyncio.sleep(
-                            plugin.config.get("imitate_interval", 10) * 60
+                            get_conf(plugin, "imitate_interval", 10) * 60
                         )
                         continue
 
@@ -972,7 +1057,7 @@ class QQOperaterService:
                     logger.info("模仿监控：更新缓存成功，下次将对比当前信息")
 
                     # 等待指定时间间隔
-                    await asyncio.sleep(plugin.config.get("imitate_interval", 10) * 60)
+                    await asyncio.sleep(get_conf(plugin, "imitate_interval", 10) * 60)
 
         except asyncio.CancelledError:
             # 任务被取消，正常退出
@@ -1000,7 +1085,7 @@ class QQOperaterService:
 
         # 消息发送间隔，限制在配置声明的 0.1~60 秒范围内
         try:
-            send_interval = float(plugin.config.get("send_interval", 1))
+            send_interval = float(get_conf(plugin, "send_interval", 1))
         except (TypeError, ValueError):
             send_interval = 1.0
         send_interval = max(0.1, min(send_interval, 60.0))
@@ -1156,7 +1241,7 @@ class QQOperaterService:
         end_time = time.time() + duration
 
         # 检查是否已在禁言中
-        mute_groups = plugin.config.get("mute_groups", [])
+        mute_groups = get_conf(plugin, "mute_groups", [])
         existing = next((m for m in mute_groups if m["group_id"] == group_id), None)
 
         if existing:
@@ -1166,7 +1251,7 @@ class QQOperaterService:
             mute_groups.append({"group_id": group_id, "end_time": end_time})
             logger.info(f"添加群禁言：群{group_id}，时长{duration}秒")
 
-        plugin.config["mute_groups"] = mute_groups
+        set_conf(plugin, "mute_groups", mute_groups)
         QQOperaterService._save_config(plugin)
         yield event.make_result().message(f"已在本群禁言{duration}秒")
 
@@ -1222,7 +1307,7 @@ class QQOperaterService:
         end_time = time.time() + duration
 
         # 检查是否已在禁言中
-        mute_users = plugin.config.get("mute_users", [])
+        mute_users = get_conf(plugin, "mute_users", [])
         existing = next(
             (
                 m
@@ -1249,7 +1334,7 @@ class QQOperaterService:
                 f"添加用户禁言：群{group_id}用户{target_user_id}，时长{duration}秒"
             )
 
-        plugin.config["mute_users"] = mute_users
+        set_conf(plugin, "mute_users", mute_users)
         QQOperaterService._save_config(plugin)
         yield event.make_result().message(f"已禁言用户 {target_user_id} {duration}秒")
 
@@ -1284,20 +1369,20 @@ class QQOperaterService:
 
         if target_user_id:
             # 恢复指定用户
-            mute_users = plugin.config.get("mute_users", [])
+            mute_users = get_conf(plugin, "mute_users", [])
             mute_users = [
                 m
                 for m in mute_users
                 if not (m["group_id"] == group_id and m["user_id"] == target_user_id)
             ]
-            plugin.config["mute_users"] = mute_users
+            set_conf(plugin, "mute_users", mute_users)
             QQOperaterService._save_config(plugin)
             yield event.make_result().message(f"已恢复用户 {target_user_id}")
         else:
             # 恢复当前群
-            mute_groups = plugin.config.get("mute_groups", [])
+            mute_groups = get_conf(plugin, "mute_groups", [])
             mute_groups = [m for m in mute_groups if m["group_id"] != group_id]
-            plugin.config["mute_groups"] = mute_groups
+            set_conf(plugin, "mute_groups", mute_groups)
             QQOperaterService._save_config(plugin)
             yield event.make_result().message("已恢复本群禁言")
 
@@ -1315,17 +1400,17 @@ class QQOperaterService:
 
         # 清理过期的群禁言
         changed = False
-        mute_groups = plugin.config.get("mute_groups", [])
+        mute_groups = get_conf(plugin, "mute_groups", [])
         active_groups = [m for m in mute_groups if m["end_time"] > current_time]
         if len(active_groups) != len(mute_groups):
-            plugin.config["mute_groups"] = active_groups
+            set_conf(plugin, "mute_groups", active_groups)
             changed = True
 
         # 清理过期的用户禁言
-        mute_users = plugin.config.get("mute_users", [])
+        mute_users = get_conf(plugin, "mute_users", [])
         active_users = [m for m in mute_users if m["end_time"] > current_time]
         if len(active_users) != len(mute_users):
-            plugin.config["mute_users"] = active_users
+            set_conf(plugin, "mute_users", active_users)
             changed = True
 
         if changed:
@@ -2052,7 +2137,7 @@ class QQOperaterService:
 
         # 踢人间隔复用"消息发送间隔"配置，限制在 0.1~60 秒，避免操作过快触发风控
         try:
-            kick_interval = float(plugin.config.get("send_interval", 1))
+            kick_interval = float(get_conf(plugin, "send_interval", 1))
         except (TypeError, ValueError):
             kick_interval = 1.0
         kick_interval = max(0.1, min(kick_interval, 60.0))
