@@ -179,6 +179,70 @@ export const feedbackTodoModule = {
       );
     }
 
+    // 附图大图查看：iframe 沙箱无弹窗，用页内遮罩实现，点击任意处或按 Esc 关闭
+    function openLightbox(src, caption) {
+      const overlay = document.createElement("div");
+      overlay.className = "img-lightbox";
+      const img = document.createElement("img");
+      img.src = src;
+      const cap = document.createElement("div");
+      cap.className = "img-lightbox-cap";
+      cap.textContent = caption;
+      overlay.appendChild(img);
+      overlay.appendChild(cap);
+      const close = () => {
+        overlay.remove();
+        document.removeEventListener("keydown", onKey);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") close();
+      };
+      overlay.addEventListener("click", close);
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(overlay);
+    }
+
+    // 懒加载待办附图缩略图（展开折叠区时才请求，避免列表页一次拉全部图片）
+    async function loadGallery(container, item) {
+      container.textContent = "正在加载附图…";
+      try {
+        const data = await bridge.apiGet("feedback_todo/images", { id: item.id });
+        const images = data.images || [];
+        container.textContent = "";
+        if (!images.length) {
+          container.className = "img-links";
+          container.textContent =
+            `附图 ${item.context_images.length} 张（本地文件已清理或转存失败，原始链接可能已过期）：\n` +
+            item.context_images.map((u, i) => `图片${i + 1}：${u}`).join("\n");
+          return;
+        }
+        const grid = document.createElement("div");
+        grid.className = "img-grid";
+        for (const img of images) {
+          const n = parseInt(img.name, 10);
+          const cell = document.createElement("figure");
+          cell.className = "img-cell";
+          const el = document.createElement("img");
+          el.src = `data:${img.mime};base64,${img.data}`;
+          el.alt = `图片${n}`;
+          el.addEventListener("click", () =>
+            openLightbox(el.src, `图片${n}（点击任意处关闭）`),
+          );
+          const cap = document.createElement("figcaption");
+          cap.textContent = `图片${n}`;
+          cell.appendChild(el);
+          cell.appendChild(cap);
+          grid.appendChild(cell);
+        }
+        container.appendChild(grid);
+      } catch (e) {
+        container.className = "img-links";
+        container.textContent =
+          `附图加载失败（${e.message}），原始链接：\n` +
+          item.context_images.map((u, i) => `图片${i + 1}：${u}`).join("\n");
+      }
+    }
+
     function buildCard(item) {
       const card = document.createElement("div");
       card.className = "card";
@@ -274,12 +338,16 @@ export const feedbackTodoModule = {
         detail.appendChild(pre);
       }
       if (Array.isArray(item.context_images) && item.context_images.length) {
-        const imgs = document.createElement("div");
-        imgs.className = "img-links";
-        imgs.textContent =
-          `附图 ${item.context_images.length} 张（[图片N] 对应第N条）：\n` +
-          item.context_images.map((u, i) => `图片${i + 1}：${u}`).join("\n");
-        detail.appendChild(imgs);
+        const gallery = document.createElement("div");
+        gallery.className = "img-gallery";
+        gallery.textContent = `附图 ${item.context_images.length} 张，展开加载缩略图…`;
+        let galleryLoaded = false;
+        detail.addEventListener("toggle", () => {
+          if (!detail.open || galleryLoaded) return;
+          galleryLoaded = true;
+          loadGallery(gallery, item);
+        });
+        detail.appendChild(gallery);
       }
       if (detail.childNodes.length > 1) card.appendChild(detail);
 

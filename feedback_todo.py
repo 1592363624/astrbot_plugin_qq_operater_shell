@@ -15,12 +15,19 @@
 注意：触发QQ需要与机器人登录的QQ不同（机器人自发消息不会进入消息事件）。
 """
 
+import asyncio
+import base64
 import re
+import shutil
 import time
 from datetime import datetime
+from pathlib import Path
+
+import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .qq_operater_service import QQOperaterService, get_conf
 
@@ -30,10 +37,23 @@ class FeedbackTodoService:
 
     STORE_KEY = "feedback_todo_store"
     ADD_KEYWORD = "加待办"
+    PLUGIN_DIR_NAME = "astrbot_plugin_qq_operater_shell"
     # 存储的聊天记录文本最大长度，避免单条待办过大
     MAX_CONTEXT_TEXT = 4000
-    # 单次随请求送入 LLM 的最大图片数（目标消息的截图优先保留）
+    # 单次随请求送入 LLM 的最大图片数（目标消息的截图优先保留），
+    # 同时也是转存到本地的附图数量上限
     MAX_LLM_IMAGES = 8
+    # 附图本地缓存目录（位于 data/plugin_data/<插件名>/ 下，删除待办时一并清理）
+    IMAGE_STORE_SUBDIR = "feedback_images"
+    # 单张附图大小上限
+    MAX_IMAGE_BYTES = 10 * 1024 * 1024
+    # 支持转存的图片类型 → 扩展名
+    IMAGE_EXTS = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+    }
 
     # ==================== 存储相关 ====================
 
@@ -202,6 +222,143 @@ class FeedbackTodoService:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    # ==================== 附图本地存储 ====================
+
+    @staticmethod
+    def _todo_image_dir(plugin, todo_id):
+        """待办附图的本地存储目录（data/plugin_data/<插件名>/feedback_images/todo_<编号>）"""
+        return (
+            Path(get_astrbot_plugin_data_path())
+            / FeedbackTodoService.PLUGIN_DIR_NAME
+            / FeedbackTodoService.IMAGE_STORE_SUBDIR
+            / f"todo_{int(todo_id)}"
+        )
+
+    @staticmethod
+    def _sniff_image_mime(data):
+        """通过文件头识别图片类型，无法识别返回空字符串"""
+        if data[:3] == b"\xff\xd8\xff":
+            return "image/jpeg"
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return "image/gif"
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return "image/webp"
+        return ""
+
+    @staticmethod
+    async def _download_todo_images(plugin, todo_id, urls):
+        """把附图 URL 转存到本地，供 WebUI 长期查看
+
+        QQ 图片链接带时效签名，过期后即失效，因此加待办时落盘保存；
+        文件按 1 开始的序号命名，与聊天记录里的 [图片N] 编号对应。
+        单张下载失败只跳过该张，不影响待办创建。
+
+        Returns:
+            list: 成功保存的文件名列表，如 ["1.jpg", "3.png"]
+        """
+        if not urls:
+            return []
+        dir_path = FeedbackTodoService._todo_image_dir(plugin, todo_id)
+        headers = {
+            "Referer": "https://gchat.qpic.cn/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        }
+
+        async def _fetch_one(session, index, url):
+            try:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(f"HTTP {resp.status}")
+                    mime = str(resp.headers.get("Content-Type", "")).split(";")[
+                        0
+                    ].strip().lower()
+                    try:
+                        declared = int(resp.headers.get("Content-Length", ""))
+                    except ValueError:
+                        declared = None
+                    if declared is not None and declared > FeedbackTodoService.MAX_IMAGE_BYTES:
+                        raise RuntimeError(f"图片超过大小限制（{declared} 字节）")
+                    # 必须用 resp.read() 读到 EOF：content.read(n) 沿用
+                    # asyncio.StreamReader 语义，只会返回缓冲区里已有的数据，
+                    # 拿不满 n 字节，导致图片被静默截断只剩开头几十 KB
+                    data = await resp.read()
+                if not data:
+                    raise RuntimeError("响应体为空")
+                if len(data) > FeedbackTodoService.MAX_IMAGE_BYTES:
+                    raise RuntimeError(f"图片超过大小限制（{len(data)} 字节）")
+                if declared is not None and len(data) != declared:
+                    raise RuntimeError(
+                        f"图片不完整（收到 {len(data)}/{declared} 字节）"
+                    )
+                sniffed = FeedbackTodoService._sniff_image_mime(data)
+                if sniffed:
+                    mime = sniffed
+                elif mime not in FeedbackTodoService.IMAGE_EXTS:
+                    mime = "image/jpeg"
+                name = f"{index}{FeedbackTodoService.IMAGE_EXTS[mime]}"
+                dir_path.mkdir(parents=True, exist_ok=True)
+                (dir_path / name).write_bytes(data)
+                return name
+            except Exception as e:
+                logger.warning(f"反馈待办：转存附图{index}失败（跳过）: {e}")
+                return None
+
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            results = await asyncio.gather(
+                *(_fetch_one(session, i, u) for i, u in enumerate(urls, 1))
+            )
+        return [name for name in results if name]
+
+    @staticmethod
+    def _delete_todo_images(plugin, todo_ids):
+        """删除待办对应的本地附图目录（删除待办时调用，best-effort）"""
+        for todo_id in todo_ids:
+            try:
+                dir_path = FeedbackTodoService._todo_image_dir(plugin, todo_id)
+            except (TypeError, ValueError):
+                continue
+            if dir_path.is_dir():
+                shutil.rmtree(dir_path, ignore_errors=True)
+                logger.debug(f"反馈待办：已清理待办 #{todo_id} 的本地附图")
+
+    @staticmethod
+    async def get_todo_images(plugin, todo_id):
+        """读取待办的本地附图，返回 [{name, mime, data(base64)}]，供 WebUI 展示
+
+        Returns:
+            list | None: 待办不存在时返回 None
+        """
+        store = await FeedbackTodoService._load_store(plugin)
+        item = next((i for i in store["items"] if i.get("id") == todo_id), None)
+        if not item:
+            return None
+        result = []
+        dir_path = FeedbackTodoService._todo_image_dir(plugin, todo_id)
+        for name in item.get("context_image_files") or []:
+            # 文件名白名单（数字序号 + 受支持扩展名），防路径穿越
+            if not isinstance(name, str) or not re.fullmatch(
+                r"\d{1,4}\.(?:jpg|png|gif|webp)", name
+            ):
+                continue
+            try:
+                data = (dir_path / name).read_bytes()
+            except OSError as e:
+                logger.warning(f"反馈待办：读取附图 #{todo_id}/{name} 失败: {e}")
+                continue
+            ext = name.rsplit(".", 1)[-1]
+            mime = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+            result.append(
+                {
+                    "name": name,
+                    "mime": mime,
+                    "data": base64.b64encode(data).decode("ascii"),
+                }
+            )
+        return result
 
     # ==================== 上下文抓取 ====================
 
@@ -637,6 +794,12 @@ class FeedbackTodoService:
 
         todo_id = store["next_id"]
         store["next_id"] = todo_id + 1
+
+        # 附图转存到本地供 WebUI 长期查看（QQ 图片链接有时效，过期即失效）
+        image_files = await FeedbackTodoService._download_todo_images(
+            plugin, todo_id, llm_images
+        )
+
         store["items"].append(
             {
                 "id": todo_id,
@@ -658,6 +821,7 @@ class FeedbackTodoService:
                     transcript, FeedbackTodoService.MAX_CONTEXT_TEXT
                 ),
                 "context_images": llm_images,
+                "context_image_files": image_files,
                 "closed_time": 0,
                 "result": "",
             }
@@ -870,6 +1034,9 @@ class FeedbackTodoService:
             ]
             auto_deleted = True
         await FeedbackTodoService._save_store(plugin, store)
+        if auto_deleted:
+            # 自动删除同样清理本地附图
+            FeedbackTodoService._delete_todo_images(plugin, [todo_id])
 
         if item.get("message_type") == "group":
             target = (
@@ -901,6 +1068,8 @@ class FeedbackTodoService:
                 i for i in store["items"] if i.get("id") not in delete_set
             ]
             await FeedbackTodoService._save_store(plugin, store)
+            # 连同本地附图一并清理
+            FeedbackTodoService._delete_todo_images(plugin, to_delete)
         return to_delete, missing
 
     @staticmethod

@@ -63,6 +63,9 @@ class QQOperaterPlugin(Star):
             f"{base}/list", self.web_todo_list, ["GET"], "反馈待办列表"
         )
         self.context.register_web_api(
+            f"{base}/images", self.web_todo_images, ["GET"], "获取反馈待办附图"
+        )
+        self.context.register_web_api(
             f"{base}/update", self.web_todo_update, ["POST"], "编辑反馈待办"
         )
         self.context.register_web_api(
@@ -80,6 +83,16 @@ class QQOperaterPlugin(Star):
         store = await FeedbackTodoService._load_store(self)
         items = sorted(store["items"], key=lambda x: x.get("id", 0), reverse=True)
         return json_response({"items": items, "next_id": store.get("next_id", 1)})
+
+    async def web_todo_images(self):
+        """待办附图（base64，供页面缩略图展示）"""
+        todo_id = request.query.get("id", type=int)
+        if not todo_id:
+            return error_response("id 必须是整数", status_code=400)
+        images = await FeedbackTodoService.get_todo_images(self, todo_id)
+        if images is None:
+            return error_response(f"未找到待办 #{todo_id}", status_code=404)
+        return json_response({"images": images})
 
     async def web_todo_update(self):
         """编辑待办的 AI 摘要/补充原因"""
