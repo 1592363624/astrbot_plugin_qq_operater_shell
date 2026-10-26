@@ -38,6 +38,14 @@ CONFIG_SECTIONS = {
         "todo_reply_feedback",
         "todo_auto_delete_done",
     ],
+    "feedback_web": [
+        "web_enabled",
+        "web_base_url",
+        "web_require_token",
+        "web_max_images",
+        "web_max_image_mb",
+        "web_notify_admins",
+    ],
 }
 
 FLAT_KEY_TO_SECTION = {

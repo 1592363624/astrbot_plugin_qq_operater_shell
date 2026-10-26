@@ -14,6 +14,7 @@ from astrbot.core.star import Star
 from astrbot.core.star.context import Context
 
 from .feedback_todo import FeedbackTodoService
+from .feedback_web import FeedbackWebService
 from .qq_operater_service import QQOperaterService, get_conf, migrate_flat_config
 
 PLUGIN_NAME = "astrbot_plugin_qq_operater_shell"
@@ -53,6 +54,8 @@ class QQOperaterPlugin(Star):
         self.real_mute_cache = {}
         # 注册反馈待办管理页面的后端 API
         self._register_feedback_todo_web_api()
+        # 注册网页反馈的公开路由（复用面板端口，群友免登录访问）
+        self.feedback_web_ready = FeedbackWebService.register(self)
 
     # ==================== 反馈待办 Web API（供插件页面调用） ====================
 
@@ -155,6 +158,9 @@ class QQOperaterPlugin(Star):
     async def initialize(self):
         """插件初始化完成后调用"""
         await super().initialize()
+        # 插件构造早于面板就绪时，路由注册会失败，这里补一次
+        if not self.feedback_web_ready:
+            self.feedback_web_ready = FeedbackWebService.register(self)
         # 检查配置中是否有模仿目标
         imitate_target = get_conf(self, "imitate", "")
         if imitate_target:
@@ -163,6 +169,8 @@ class QQOperaterPlugin(Star):
 
     async def terminate(self):
         """插件卸载/重载时取消后台模仿任务"""
+        # 先摘掉公开反馈页路由，避免留下指向即将销毁实例的处理函数
+        FeedbackWebService.unregister()
         if self.imitate_task and not self.imitate_task.done():
             self.imitate_task.cancel()
             try:
@@ -630,5 +638,33 @@ async def feedback_todo_delete(self, event: AstrMessageEvent):
     /删除待办 3
     """
     async for result in FeedbackTodoService.handle_delete_todo(self, event):
+        yield result
+    event.stop_event()
+
+
+# ==================== 网页反馈指令 ====================
+
+
+@filter.command("反馈")
+async def feedback_page(self, event: AstrMessageEvent):
+    """获取网页反馈地址（所有人可用）
+    使用示例：
+    /反馈
+    机器人会返回一个免登录的反馈页链接，可填文字、传截图、选发生时间。
+    """
+    async for result in FeedbackWebService.handle_feedback_link(self, event):
+        yield result
+    event.stop_event()
+
+
+@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command("反馈链接")
+async def feedback_page_link(self, event: AstrMessageEvent):
+    """查看或重置网页反馈地址
+    使用示例：
+    /反馈链接
+    /反馈链接 重置
+    """
+    async for result in FeedbackWebService.handle_admin_link(self, event):
         yield result
     event.stop_event()

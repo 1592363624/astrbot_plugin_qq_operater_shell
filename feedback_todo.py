@@ -38,6 +38,13 @@ class FeedbackTodoService:
     STORE_KEY = "feedback_todo_store"
     ADD_KEYWORD = "加待办"
     PLUGIN_DIR_NAME = "astrbot_plugin_qq_operater_shell"
+    # 网页反馈的问题类型 → 展示文案（网页表单与待办展示共用同一份定义）
+    WEB_TYPE_LABELS = {
+        "bug": "Bug 报错",
+        "feature": "功能建议",
+        "help": "使用求助",
+        "other": "其他",
+    }
     # 存储的聊天记录文本最大长度，避免单条待办过大
     MAX_CONTEXT_TEXT = 4000
     # 单次随请求送入 LLM 的最大图片数（目标消息的截图优先保留），
@@ -222,6 +229,25 @@ class FeedbackTodoService:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _source_label(item):
+        """待办来源的展示文案（群聊 / 私聊 / 网页反馈）"""
+        message_type = item.get("message_type")
+        if message_type == "group":
+            return f"群 {item.get('group_name') or '未知群'}({item.get('group_id')})"
+        if message_type == "web" or item.get("source") == "web":
+            return "网页反馈"
+        return "私聊"
+
+    @staticmethod
+    def _type_label(item):
+        """网页反馈的问题类型文案，非网页来源返回空字符串"""
+        if item.get("message_type") != "web" and item.get("source") != "web":
+            return ""
+        return FeedbackTodoService.WEB_TYPE_LABELS.get(
+            item.get("issue_type") or "other", "其他"
+        )
 
     # ==================== 附图本地存储 ====================
 
@@ -597,8 +623,16 @@ class FeedbackTodoService:
     async def _generate_summary(
         plugin, provider_id, system_prompt, prompt, image_urls=None
     ):
-        """调用 LLM 生成摘要；附图失败自动降级纯文本重试，失败返回空字符串"""
-        images = [str(u) for u in (image_urls or []) if str(u).startswith("http")]
+        """调用 LLM 生成摘要；附图失败自动降级纯文本重试，失败返回空字符串
+
+        image_urls 既支持 http(s) 远程链接（群聊截图），也支持
+        data:image/... 内联图片（网页反馈上传的本地截图）。
+        """
+        images = [
+            str(u)
+            for u in (image_urls or [])
+            if str(u).startswith("http") or str(u).startswith("data:image/")
+        ]
 
         async def _generate(with_images):
             llm_resp = await plugin.context.llm_generate(
@@ -889,10 +923,7 @@ class FeedbackTodoService:
         lines = [f"📋 反馈待办列表（未完成 {pending_count} 条）："]
         for item in items:
             status = "✅" if item.get("status") == "done" else "⏳"
-            if item.get("message_type") == "group":
-                source = f"{item.get('group_name') or '未知群'}({item.get('group_id')})"
-            else:
-                source = "私聊"
+            source = FeedbackTodoService._source_label(item)
             summary = (
                 item.get("llm_summary")
                 or item.get("target_text")
@@ -919,29 +950,44 @@ class FeedbackTodoService:
             return
 
         status = "✅ 已完成" if item.get("status") == "done" else "⏳ 未完成"
+        is_web = item.get("message_type") == "web" or item.get("source") == "web"
         lines = [f"📋 反馈待办 #{todo_id}", f"状态：{status}"]
         lines.append(
             f"创建时间：{FeedbackTodoService._fmt_full_time(item.get('created_time', 0))}"
         )
-        if item.get("message_type") == "group":
-            lines.append(
-                f"来源：群 {item.get('group_name') or '未知群'}({item.get('group_id')})"
-            )
-        else:
-            lines.append("来源：私聊")
+        lines.append(f"来源：{FeedbackTodoService._source_label(item)}")
+        type_label = FeedbackTodoService._type_label(item)
+        if type_label:
+            lines.append(f"问题类型：{type_label}")
+        reporter_name = item.get("reporter_name", "?")
+        reporter_id = str(item.get("reporter_id") or "")
         lines.append(
-            f"报告人：{item.get('reporter_name', '?')}({item.get('reporter_id', '?')})"
+            f"报告人：{reporter_name}({reporter_id})"
+            if reporter_id
+            else f"报告人：{reporter_name}"
         )
         if item.get("message_time"):
+            time_label = "问题发生时间" if is_web else "被引用消息时间"
             lines.append(
-                f"被引用消息时间：{FeedbackTodoService._fmt_full_time(item.get('message_time'))}"
+                f"{time_label}：{FeedbackTodoService._fmt_full_time(item.get('message_time'))}"
             )
+        if item.get("contact"):
+            lines.append(f"联系方式：{item['contact']}")
         if item.get("reason"):
             lines.append(f"补充原因：{item['reason']}")
         if item.get("llm_summary"):
             lines.append(f"AI 摘要：{item['llm_summary']}")
         if item.get("target_text"):
-            lines.append(f"被引用消息：{item.get('reporter_name', '?')}：{item['target_text']}")
+            if is_web:
+                lines.append(f"问题描述：{item['target_text']}")
+            else:
+                lines.append(
+                    f"被引用消息：{item.get('reporter_name', '?')}：{item['target_text']}"
+                )
+        if item.get("steps"):
+            lines.append("────────────")
+            lines.append("复现步骤：")
+            lines.append(item["steps"])
         if item.get("context_text"):
             lines.append("────────────")
             lines.append("上下文聊天记录：")
@@ -983,15 +1029,25 @@ class FeedbackTodoService:
                 f"（{FeedbackTodoService._fmt_full_time(item.get('closed_time', 0))}），无需重复操作"
             )
 
-        if client is None:
+        # 网页反馈没有可引用的 QQ 消息，只有用户留了 QQ 号才能私聊通知
+        is_web = item.get("message_type") == "web" or item.get("source") == "web"
+        web_reporter = (
+            FeedbackTodoService._to_int(item.get("reporter_id")) if is_web else None
+        )
+        # 网页反馈没留联系方式时无需发送，直接标记完成即可
+        skip_notify = is_web and not web_reporter
+
+        if client is None and not skip_notify:
             client = await QQOperaterService.get_client(plugin, None)
-        if not client:
+        if not client and not skip_notify:
             return False, "当前平台不支持发送回复消息，无法完成待办"
 
-        # 构造引用回复消息：引用报告人的原始消息 + @报告人 + 处理结果
+        # 构造回复消息：群聊/私聊引用原始消息，网页反馈直接私聊推送结果
         reply_text = f"你之前反馈的问题已处理：\n{result_text}\n\n（反馈待办 #{todo_id}）"
         try:
-            if item.get("message_type") == "group":
+            if skip_notify:
+                pass
+            elif item.get("message_type") == "group":
                 group_id_int = FeedbackTodoService._to_int(item.get("group_id"))
                 if not group_id_int:
                     raise ValueError("群号无效")
@@ -1004,6 +1060,12 @@ class FeedbackTodoService:
                 chain.append({"type": "text", "data": {"text": reply_text}})
                 await client.api.call_action(
                     "send_group_msg", group_id=group_id_int, message=chain
+                )
+            elif is_web:
+                await client.api.call_action(
+                    "send_private_msg",
+                    user_id=web_reporter,
+                    message=[{"type": "text", "data": {"text": reply_text}}],
                 )
             else:
                 reporter_int = FeedbackTodoService._to_int(item.get("reporter_id"))
@@ -1038,14 +1100,24 @@ class FeedbackTodoService:
             # 自动删除同样清理本地附图
             FeedbackTodoService._delete_todo_images(plugin, [todo_id])
 
-        if item.get("message_type") == "group":
+        if is_web:
+            target = (
+                f"{item.get('reporter_name', '?')}({web_reporter}) 的私聊"
+                if web_reporter
+                else ""
+            )
+        elif item.get("message_type") == "group":
             target = (
                 f"群 {item.get('group_name') or '未知群'}({item.get('group_id')}) "
                 f"中 {item.get('reporter_name', '?')}({item.get('reporter_id', '?')})"
             )
         else:
             target = f"{item.get('reporter_name', '?')}({item.get('reporter_id', '?')}) 的私聊"
-        msg = f"✅ 待办 #{todo_id} 已完成，处理结果已引用回复给 {target}"
+
+        if target:
+            msg = f"✅ 待办 #{todo_id} 已完成，处理结果已发送给 {target}"
+        else:
+            msg = f"✅ 待办 #{todo_id} 已完成（该网页反馈未留联系方式，未发送通知）"
         if auto_deleted:
             msg += "（已按配置自动删除该待办）"
         return True, msg

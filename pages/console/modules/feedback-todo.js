@@ -1,6 +1,18 @@
 // 反馈待办模块：列表 / 编辑摘要 / 重新总结 / 完成回复 / 批量删除
 const bridge = window.AstrBotPluginPage;
 
+// 网页反馈的问题类型（与后端 FeedbackTodoService.WEB_TYPE_LABELS 保持一致）
+const WEB_TYPE_LABELS = {
+  bug: "Bug 报错",
+  feature: "功能建议",
+  help: "使用求助",
+  other: "其他",
+};
+
+function isWebItem(item) {
+  return item.message_type === "web" || item.source === "web";
+}
+
 export const feedbackTodoModule = {
   id: "feedback-todo",
   title: "反馈待办",
@@ -141,6 +153,7 @@ export const feedbackTodoModule = {
       if (item.message_type === "group") {
         return `群 ${item.group_name || "未知群"}(${item.group_id || "?"})`;
       }
+      if (isWebItem(item)) return "网页反馈";
       return "私聊";
     }
 
@@ -205,15 +218,17 @@ export const feedbackTodoModule = {
     // 懒加载待办附图缩略图（展开折叠区时才请求，避免列表页一次拉全部图片）
     async function loadGallery(container, item) {
       container.textContent = "正在加载附图…";
+      const remote = Array.isArray(item.context_images) ? item.context_images : [];
       try {
         const data = await bridge.apiGet("feedback_todo/images", { id: item.id });
         const images = data.images || [];
         container.textContent = "";
         if (!images.length) {
           container.className = "img-links";
-          container.textContent =
-            `附图 ${item.context_images.length} 张（本地文件已清理或转存失败，原始链接可能已过期）：\n` +
-            item.context_images.map((u, i) => `图片${i + 1}：${u}`).join("\n");
+          container.textContent = remote.length
+            ? `附图 ${remote.length} 张（本地文件已清理或转存失败，原始链接可能已过期）：\n` +
+              remote.map((u, i) => `图片${i + 1}：${u}`).join("\n")
+            : "附图文件已丢失";
           return;
         }
         const grid = document.createElement("div");
@@ -237,9 +252,10 @@ export const feedbackTodoModule = {
         container.appendChild(grid);
       } catch (e) {
         container.className = "img-links";
-        container.textContent =
-          `附图加载失败（${e.message}），原始链接：\n` +
-          item.context_images.map((u, i) => `图片${i + 1}：${u}`).join("\n");
+        container.textContent = remote.length
+          ? `附图加载失败（${e.message}），原始链接：\n` +
+            remote.map((u, i) => `图片${i + 1}：${u}`).join("\n")
+          : `附图加载失败：${e.message}`;
       }
     }
 
@@ -283,11 +299,16 @@ export const feedbackTodoModule = {
       head.appendChild(time);
       card.appendChild(head);
 
+      const web = isWebItem(item);
       const meta = document.createElement("div");
       meta.className = "card-meta";
-      meta.textContent = `报告人：${item.reporter_name || "?"}(${item.reporter_id || "?"})`;
+      const reporter = item.reporter_id
+        ? `${item.reporter_name || "?"}(${item.reporter_id})`
+        : item.reporter_name || "?";
+      const typeLabel = web ? WEB_TYPE_LABELS[item.issue_type] || "其他" : "";
+      meta.textContent = `报告人：${reporter}${typeLabel ? ` · ${typeLabel}` : ""}`;
       if (item.message_time)
-        meta.textContent += ` · 反馈消息时间 ${fmtTime(item.message_time)}`;
+        meta.textContent += `${web ? " · 发生时间 " : " · 反馈消息时间 "}${fmtTime(item.message_time)}`;
       card.appendChild(meta);
 
       // AI 摘要（可编辑）
@@ -312,24 +333,95 @@ export const feedbackTodoModule = {
       reasonField.appendChild(reasonBox);
       card.appendChild(reasonField);
 
-      // 被引用消息
-      if (item.target_text) {
+      // 被引用消息 / 问题描述（网页反馈按图文混排渲染，图片 chip 可点开附图）
+      let detailRef = null;
+      const blocks =
+        web && Array.isArray(item.content_blocks) && item.content_blocks.length
+          ? item.content_blocks
+          : null;
+      if (blocks) {
+        const hasBody = blocks.some(
+          (b) => b.type === "image" || String(b.text || "").trim(),
+        );
+        if (hasBody) {
+          const contentField = document.createElement("div");
+          contentField.className = "field";
+          const label = document.createElement("label");
+          label.textContent = "问题描述";
+          contentField.appendChild(label);
+          const pre = document.createElement("pre");
+          pre.className = "context";
+          for (const block of blocks) {
+            if (block.type === "text") {
+              pre.appendChild(document.createTextNode(String(block.text || "")));
+            } else if (block.type === "image" && block.index) {
+              const chip = document.createElement("button");
+              chip.type = "button";
+              chip.className = "img-chip";
+              chip.textContent = `图片 ${block.index}`;
+              chip.title = "点击展开附图";
+              chip.addEventListener("click", () => {
+                if (detailRef) {
+                  detailRef.open = true;
+                  detailRef.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+              });
+              pre.appendChild(chip);
+              pre.appendChild(document.createTextNode(" "));
+            }
+          }
+          contentField.appendChild(pre);
+          card.appendChild(contentField);
+        }
+      } else if (item.target_text) {
         const target = document.createElement("div");
         target.className = "field";
         const label = document.createElement("label");
-        label.textContent = "被引用消息";
+        label.textContent = web ? "问题描述" : "被引用消息";
         const pre = document.createElement("pre");
         pre.className = "context";
-        pre.textContent = `${item.reporter_name || "?"}：${item.target_text}`;
+        pre.textContent = web
+          ? item.target_text
+          : `${item.reporter_name || "?"}：${item.target_text}`;
         target.appendChild(label);
         target.appendChild(pre);
         card.appendChild(target);
       }
 
+      // 网页反馈的复现步骤与联系方式
+      if (item.steps) {
+        const stepsField = document.createElement("div");
+        stepsField.className = "field";
+        const stepsLabel = document.createElement("label");
+        stepsLabel.textContent = "复现步骤";
+        const stepsPre = document.createElement("pre");
+        stepsPre.className = "context";
+        stepsPre.textContent = item.steps;
+        stepsField.appendChild(stepsLabel);
+        stepsField.appendChild(stepsPre);
+        card.appendChild(stepsField);
+      }
+      if (item.contact) {
+        const contactField = document.createElement("div");
+        contactField.className = "field";
+        const contactLabel = document.createElement("label");
+        contactLabel.textContent = "联系方式";
+        const contactPre = document.createElement("pre");
+        contactPre.className = "context";
+        contactPre.textContent = item.contact;
+        contactField.appendChild(contactLabel);
+        contactField.appendChild(contactPre);
+        card.appendChild(contactField);
+      }
+
       // 上下文与附图（折叠）
+      const hasRemoteImages = Array.isArray(item.context_images) && item.context_images.length > 0;
+      const hasLocalImages =
+        Array.isArray(item.context_image_files) && item.context_image_files.length > 0;
       const detail = document.createElement("details");
+      detailRef = detail;
       const detailSummary = document.createElement("summary");
-      detailSummary.textContent = "聊天上下文与附图";
+      detailSummary.textContent = web ? "附图" : "聊天上下文与附图";
       detail.appendChild(detailSummary);
       if (item.context_text) {
         const pre = document.createElement("pre");
@@ -337,10 +429,11 @@ export const feedbackTodoModule = {
         pre.textContent = item.context_text;
         detail.appendChild(pre);
       }
-      if (Array.isArray(item.context_images) && item.context_images.length) {
+      if (hasRemoteImages || hasLocalImages) {
         const gallery = document.createElement("div");
         gallery.className = "img-gallery";
-        gallery.textContent = `附图 ${item.context_images.length} 张，展开加载缩略图…`;
+        const total = (item.context_image_files || item.context_images || []).length;
+        gallery.textContent = `附图 ${total} 张，展开加载缩略图…`;
         let galleryLoaded = false;
         detail.addEventListener("toggle", () => {
           if (!detail.open || galleryLoaded) return;

@@ -1,0 +1,1210 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1117" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>问题反馈</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --bg-soft: #161922;
+        --card: #1b1f2a;
+        --card-2: #232836;
+        --line: #2b3140;
+        --text: #e8ecf5;
+        --text-dim: #98a1b3;
+        --text-faint: #6b7488;
+        --accent: #5b8cff;
+        --accent-soft: rgba(91, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #f0b429;
+        --danger: #f0616d;
+        --radius: 14px;
+        --shadow: 0 12px 40px rgba(0, 0, 0, 0.38);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f4f6fb;
+          --bg-soft: #eaeef7;
+          --card: #ffffff;
+          --card-2: #f2f5fb;
+          --line: #dfe4ee;
+          --text: #1a1f2b;
+          --text-dim: #5b6478;
+          --text-faint: #8a93a6;
+          --accent: #3563e9;
+          --accent-soft: rgba(53, 99, 233, 0.09);
+          --ok: #0f9d63;
+          --warn: #b4790b;
+          --danger: #d63b48;
+          --shadow: 0 10px 30px rgba(22, 34, 62, 0.09);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        font-size: 15px;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        padding: 24px 16px calc(40px + env(safe-area-inset-bottom));
+        min-height: 100vh;
+      }
+      .wrap {
+        max-width: 660px;
+        margin: 0 auto;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--accent), #8b5cf6);
+        color: #fff;
+        font-size: 20px;
+        flex: none;
+        box-shadow: 0 6px 18px rgba(91, 140, 255, 0.32);
+      }
+      .brand-text h1 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 650;
+        letter-spacing: 0.2px;
+      }
+      .brand-text p {
+        margin: 2px 0 0;
+        font-size: 13px;
+        color: var(--text-dim);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+      @media (max-width: 480px) {
+        .card {
+          padding: 18px 16px;
+        }
+      }
+      .field {
+        margin-bottom: 20px;
+      }
+      .field:last-of-type {
+        margin-bottom: 8px;
+      }
+      .label {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .label .req {
+        color: var(--danger);
+        font-weight: 700;
+      }
+      .label .opt {
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--text-faint);
+      }
+      .hint {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--text-faint);
+        line-height: 1.55;
+      }
+      input[type="text"],
+      input[type="datetime-local"],
+      textarea {
+        width: 100%;
+        background: var(--card-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 14.5px;
+        padding: 11px 13px;
+        outline: none;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+      input[type="text"]:focus,
+      input[type="datetime-local"]:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      textarea {
+        resize: vertical;
+        min-height: 108px;
+        line-height: 1.6;
+      }
+      input::placeholder,
+      textarea::placeholder {
+        color: var(--text-faint);
+      }
+      /* 分段选择器 */
+      .segmented {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+        gap: 8px;
+      }
+      .seg {
+        min-width: 0;
+        text-align: center;
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--card-2);
+        color: var(--text-dim);
+        font-size: 13.5px;
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+        transition: all 0.15s ease;
+      }
+      .seg:hover {
+        border-color: var(--text-faint);
+      }
+      .seg.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      /* 时间行 */
+      .time-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .time-row input {
+        flex: 1 1 auto;
+      }
+      .mini-btn {
+        flex: none;
+        padding: 10px 13px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--card-2);
+        color: var(--text-dim);
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s ease;
+      }
+      .mini-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      /* 图文混排编辑器 */
+      .editor-wrap {
+        position: relative;
+        background: var(--card-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+      .editor-wrap:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .editor {
+        min-height: 136px;
+        max-height: 460px;
+        overflow-y: auto;
+        padding: 11px 13px;
+        font-size: 14.5px;
+        line-height: 1.7;
+        color: var(--text);
+        outline: none;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .editor.over {
+        background: var(--accent-soft);
+        border-radius: 10px;
+      }
+      .editor-ph {
+        position: absolute;
+        top: 11px;
+        left: 13px;
+        right: 13px;
+        font-size: 14.5px;
+        line-height: 1.7;
+        color: var(--text-faint);
+        pointer-events: none;
+        user-select: none;
+      }
+      .editor-ph b {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      /* 编辑器内联图片（独占一行，前后文字自然断行） */
+      .ed-img {
+        display: block;
+        position: relative;
+        width: fit-content;
+        max-width: 100%;
+        margin: 10px 0;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: var(--bg-soft);
+        line-height: 0;
+        cursor: default;
+      }
+      .ed-img img {
+        display: block;
+        max-width: 100%;
+        max-height: 240px;
+        width: auto;
+        height: auto;
+        cursor: zoom-in;
+      }
+      .ed-img-x {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 20px;
+        height: 20px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        font-size: 12px;
+        line-height: 1;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        opacity: 0.9;
+        transition: background 0.15s ease;
+      }
+      .ed-img-x:hover {
+        background: var(--danger);
+      }
+      /* 编辑器工具栏 */
+      .ed-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 9px;
+        flex-wrap: wrap;
+      }
+      .ed-bar .mini-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 12px;
+        font-size: 12.5px;
+      }
+      .ed-tip {
+        flex: 1 1 auto;
+        font-size: 12px;
+        color: var(--text-faint);
+        line-height: 1.5;
+      }
+      /* 提交 */
+      .submit-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+      }
+      .btn-primary {
+        flex: 1 1 auto;
+        padding: 13px 20px;
+        border: none;
+        border-radius: 11px;
+        background: linear-gradient(135deg, var(--accent), #7c5cf6);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: transform 0.12s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+        box-shadow: 0 8px 22px rgba(91, 140, 255, 0.3);
+      }
+      .btn-primary:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 11px 26px rgba(91, 140, 255, 0.38);
+      }
+      .btn-primary:active:not(:disabled) {
+        transform: translateY(0);
+      }
+      .btn-primary:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+      .counter {
+        flex: none;
+        font-size: 12px;
+        color: var(--text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      /* 提示条 */
+      .alert {
+        display: none;
+        margin-top: 14px;
+        padding: 11px 14px;
+        border-radius: 10px;
+        font-size: 13.5px;
+        line-height: 1.55;
+        border: 1px solid transparent;
+      }
+      .alert.show {
+        display: block;
+      }
+      .alert.err {
+        background: rgba(240, 97, 109, 0.1);
+        border-color: rgba(240, 97, 109, 0.35);
+        color: var(--danger);
+      }
+      .alert.ok {
+        background: rgba(62, 207, 142, 0.1);
+        border-color: rgba(62, 207, 142, 0.35);
+        color: var(--ok);
+      }
+      /* 结果页 */
+      .result {
+        text-align: center;
+        padding: 14px 6px 6px;
+      }
+      .result-icon {
+        width: 62px;
+        height: 62px;
+        margin: 0 auto 16px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 30px;
+        background: rgba(62, 207, 142, 0.13);
+        color: var(--ok);
+      }
+      .result h2 {
+        margin: 0 0 8px;
+        font-size: 19px;
+        font-weight: 650;
+      }
+      .result p {
+        margin: 0 auto 6px;
+        max-width: 420px;
+        color: var(--text-dim);
+        font-size: 14px;
+      }
+      .ticket {
+        display: inline-block;
+        margin: 14px 0 4px;
+        padding: 7px 16px;
+        border-radius: 9px;
+        background: var(--card-2);
+        border: 1px solid var(--line);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 16px;
+        font-weight: 650;
+        color: var(--accent);
+        letter-spacing: 0.6px;
+      }
+      .result-actions {
+        margin-top: 22px;
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .btn-ghost {
+        padding: 10px 18px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--text-dim);
+        font-size: 14px;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .btn-ghost:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .footer {
+        margin-top: 18px;
+        text-align: center;
+        font-size: 12px;
+        color: var(--text-faint);
+        line-height: 1.7;
+      }
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        margin-right: 7px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        vertical-align: -2px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .hidden {
+        display: none !important;
+      }
+      /* 图片大图预览 */
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.88);
+        cursor: zoom-out;
+        animation: lb-fade 0.15s ease;
+      }
+      .lightbox img {
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 8px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      }
+      @keyframes lb-fade {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div class="brand-text">
+          <h1>问题反馈</h1>
+          <p>描述你遇到的问题，我们会尽快跟进处理</p>
+        </div>
+      </div>
+
+      <!-- 加载中 -->
+      <div class="card" id="view-loading">
+        <div class="result">
+          <p style="color: var(--text-dim)">正在加载…</p>
+        </div>
+      </div>
+
+      <!-- 链接无效 -->
+      <div class="card hidden" id="view-invalid">
+        <div class="result">
+          <div class="result-icon" style="background: rgba(240, 97, 109, 0.12); color: var(--danger)">!</div>
+          <h2 id="invalid-title">链接无效或已失效</h2>
+          <p id="invalid-desc">
+            请回到 QQ 群发送「<b>/反馈</b>」获取新的反馈地址，或联系管理员确认。
+          </p>
+        </div>
+      </div>
+
+      <!-- 表单 -->
+      <div class="card hidden" id="view-form">
+        <form id="form" novalidate>
+          <div class="field">
+            <div class="label">问题类型</div>
+            <div class="segmented" id="type-group">
+              <div class="seg active" data-type="bug">🐞 Bug 报错</div>
+              <div class="seg" data-type="feature">💡 功能建议</div>
+              <div class="seg" data-type="help">❓ 使用求助</div>
+              <div class="seg" data-type="other">💬 其他</div>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">
+              <span>问题描述 <span class="req">*</span></span>
+            </div>
+            <div class="editor-wrap">
+              <div
+                class="editor"
+                id="editor"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                aria-label="问题描述，支持图文混排"
+                spellcheck="false"
+              ></div>
+              <div class="editor-ph" id="editor-ph">
+                描述你遇到的问题：发生了什么、机器人当时的反应、你期望的结果…<br />
+                可以直接 <b>Ctrl+V 粘贴截图</b>、把图片拖进来，图文混着写就行。
+              </div>
+            </div>
+            <div class="ed-bar">
+              <button type="button" class="mini-btn" id="pick-btn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="3.5" />
+                  <circle cx="8.6" cy="8.6" r="1.6" />
+                  <path d="M21 15.5l-4.6-4.6L5.2 21" />
+                </svg>
+                添加图片
+              </button>
+              <span class="ed-tip" id="ed-tip">最多 6 张，单张不超过 5MB</span>
+              <span class="counter" id="counter">0 / 2000</span>
+            </div>
+            <input type="file" id="file-input" accept="image/*" multiple hidden />
+          </div>
+
+          <div class="field">
+            <div class="label">
+              <span>问题发生时间 <span class="opt">可选</span></span>
+            </div>
+            <div class="time-row">
+              <input type="datetime-local" id="occurred" />
+              <button type="button" class="mini-btn" id="now-btn">就是现在</button>
+            </div>
+            <p class="hint">默认按提交时间记录，如果问题发生在更早之前，请改成实际时间。</p>
+          </div>
+
+          <div class="field">
+            <div class="label">
+              <span>复现步骤 <span class="opt">可选</span></span>
+            </div>
+            <textarea
+              id="steps"
+              maxlength="1200"
+              placeholder="1. 在群里发送 …&#10;2. 机器人回复 …&#10;3. 然后出现 …"
+              style="min-height: 82px"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <div class="label">
+              <span>联系方式 <span class="opt">可选</span></span>
+            </div>
+            <input
+              type="text"
+              id="contact"
+              maxlength="80"
+              placeholder="QQ 号 / 邮箱，方便把处理结果回给你"
+            />
+            <p class="hint">留空也能提交，但处理结果只能发在群里，可能你看不到。</p>
+          </div>
+
+          <div class="submit-row">
+            <button type="submit" class="btn-primary" id="submit-btn">提交反馈</button>
+          </div>
+          <div class="alert" id="alert"></div>
+        </form>
+      </div>
+
+      <!-- 成功 -->
+      <div class="card hidden" id="view-done">
+        <div class="result">
+          <div class="result-icon">✓</div>
+          <h2>反馈已提交，感谢！</h2>
+          <p>你的反馈编号是</p>
+          <div class="ticket" id="ticket-id">#0</div>
+          <p id="done-desc">我们会在处理完成后通过你留下的联系方式通知你。</p>
+          <div class="result-actions">
+            <button type="button" class="btn-ghost" id="again-btn">再提交一条</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer" id="footer"></div>
+    </div>
+
+    <div class="lightbox hidden" id="lightbox">
+      <img id="lightbox-img" alt="图片预览" />
+    </div>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var MAX_TEXT = 2000;
+        // 页面挂在 /feedback，接口在 /feedback/api/*；用当前路径推导，
+        // 兼容反向代理到子路径（如 /astrbot/feedback）的部署方式
+        var API_BASE =
+          location.pathname.replace(/\/+$/, "").replace(/\/index\.html$/, "") + "/api/";
+        var state = {
+          token: "",
+          type: "bug",
+          images: new Map(), // id -> {id, file, url, size}
+          maxImages: 6,
+          maxImageMb: 5,
+          submitting: false,
+        };
+        var seq = 0;
+        var editorEl = null;
+
+        var $ = function (id) {
+          return document.getElementById(id);
+        };
+
+        function showView(name) {
+          ["view-loading", "view-invalid", "view-form", "view-done"].forEach(function (v) {
+            $(v).classList.toggle("hidden", v !== name);
+          });
+          // 成功页不再展示底部说明，避免与结果文案重复
+          $("footer").style.display = name === "view-done" ? "none" : "";
+        }
+
+        function showAlert(msg, kind) {
+          var el = $("alert");
+          el.textContent = msg;
+          el.className = "alert show " + (kind === "ok" ? "ok" : "err");
+        }
+
+        function clearAlert() {
+          var el = $("alert");
+          el.className = "alert";
+          el.textContent = "";
+        }
+
+        function tokenFromUrl() {
+          var m = /[?&]t=([^&#]+)/.exec(location.search);
+          return m ? decodeURIComponent(m[1]) : "";
+        }
+
+        function pad(n) {
+          return n < 10 ? "0" + n : String(n);
+        }
+
+        function toLocalInput(date) {
+          return (
+            date.getFullYear() +
+            "-" +
+            pad(date.getMonth() + 1) +
+            "-" +
+            pad(date.getDate()) +
+            "T" +
+            pad(date.getHours()) +
+            ":" +
+            pad(date.getMinutes())
+          );
+        }
+
+        function setNow() {
+          $("occurred").value = toLocalInput(new Date());
+        }
+
+        // ---------- 编辑器：图文混排 ----------
+        // 把编辑器内容序列化成字符串，图片节点用私有区字符 \u0000<id>\u0000 占位，
+        // 这样能完整保留「文字 — 图片 — 文字」的先后顺序
+        function editorRaw() {
+          var buf = "";
+          var walk = function (parent) {
+            for (var i = 0; i < parent.childNodes.length; i++) {
+              var node = parent.childNodes[i];
+              if (node.nodeType === 3) {
+                buf += node.nodeValue.replace(/\u200b/g, "");
+              } else if (node.nodeType === 1) {
+                var tag = node.tagName;
+                if (node.dataset && node.dataset.imgId) {
+                  buf += "\u0000" + node.dataset.imgId + "\u0000";
+                } else if (tag === "BR") {
+                  buf += "\n";
+                } else if (
+                  tag === "DIV" ||
+                  tag === "P" ||
+                  tag === "LI" ||
+                  tag === "BLOCKQUOTE"
+                ) {
+                  if (buf && buf.charAt(buf.length - 1) !== "\n") buf += "\n";
+                  walk(node);
+                  if (buf.charAt(buf.length - 1) !== "\n") buf += "\n";
+                } else {
+                  walk(node);
+                }
+              }
+            }
+          };
+          if (editorEl) walk(editorEl);
+          return buf;
+        }
+
+        function plainText() {
+          return editorRaw().replace(/\u0000\d+\u0000/g, "");
+        }
+
+        function hasContent() {
+          return (
+            plainText().replace(/\s/g, "").length > 0 ||
+            !!(editorEl && editorEl.querySelector("[data-img-id]"))
+          );
+        }
+
+        function updateCounter() {
+          var len = plainText().replace(/^\s+|\s+$/g, "").length;
+          $("counter").textContent = len + " / " + MAX_TEXT;
+          $("counter").style.color = len > MAX_TEXT ? "var(--danger)" : "";
+          $("editor-ph").style.display = hasContent() ? "none" : "";
+          var full = state.images.size >= state.maxImages;
+          $("pick-btn").style.opacity = full ? "0.45" : "";
+          $("pick-btn").style.pointerEvents = full ? "none" : "";
+        }
+
+        function placeCaretAtEnd() {
+          if (!editorEl) return;
+          editorEl.focus();
+          var range = document.createRange();
+          range.selectNodeContents(editorEl);
+          range.collapse(false);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+
+        // ---------- 图片大图预览 ----------
+        function openLightbox(src) {
+          $("lightbox-img").src = src;
+          $("lightbox").classList.remove("hidden");
+        }
+
+        function closeLightbox() {
+          var box = $("lightbox");
+          if (box.classList.contains("hidden")) return;
+          box.classList.add("hidden");
+          $("lightbox-img").src = "";
+        }
+
+        // 图片作为 contenteditable=false 的整体节点插入光标处，不可被光标拆开
+        function insertImageNode(item) {
+          var wrap = document.createElement("span");
+          wrap.className = "ed-img";
+          wrap.contentEditable = "false";
+          wrap.dataset.imgId = String(item.id);
+
+          var img = document.createElement("img");
+          img.src = item.url;
+          img.alt = "图片" + item.id;
+          img.title = "点击查看大图";
+          img.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            openLightbox(item.url);
+          });
+          wrap.appendChild(img);
+
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ed-img-x";
+          btn.textContent = "×";
+          btn.title = "移除这张图片";
+          btn.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            URL.revokeObjectURL(item.url);
+            state.images.delete(item.id);
+            wrap.remove();
+            updateCounter();
+          });
+          wrap.appendChild(btn);
+
+          var sel = window.getSelection();
+          var placed = false;
+          if (sel && sel.rangeCount) {
+            var range = sel.getRangeAt(0);
+            if (editorEl.contains(range.commonAncestorContainer)) {
+              range.deleteContents();
+              range.insertNode(wrap);
+              // 图片后补一个零宽字符，让光标能落到图片右边继续输入
+              var tail = document.createTextNode("\u200b");
+              wrap.after(tail);
+              range.setStartAfter(tail);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              placed = true;
+            }
+          }
+          if (!placed) {
+            editorEl.appendChild(wrap);
+            editorEl.appendChild(document.createTextNode("\u200b"));
+          }
+        }
+
+        function compressImage(file) {
+          return new Promise(function (resolve) {
+            // GIF 保留动图，不做重编码
+            if (!/^image\//.test(file.type) || file.type === "image/gif") {
+              resolve(file);
+              return;
+            }
+            var url = URL.createObjectURL(file);
+            var img = new Image();
+            img.onload = function () {
+              var maxEdge = 1600;
+              var scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+              // 小图且体积不大时原样上传
+              if (scale === 1 && file.size < 500 * 1024) {
+                URL.revokeObjectURL(url);
+                resolve(file);
+                return;
+              }
+              var canvas = document.createElement("canvas");
+              canvas.width = Math.max(1, Math.round(img.width * scale));
+              canvas.height = Math.max(1, Math.round(img.height * scale));
+              var ctx = canvas.getContext("2d");
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              canvas.toBlob(
+                function (blob) {
+                  URL.revokeObjectURL(url);
+                  if (!blob) {
+                    resolve(file);
+                    return;
+                  }
+                  resolve(new File([blob], "image.jpg", { type: "image/jpeg" }));
+                },
+                "image/jpeg",
+                0.85
+              );
+            };
+            img.onerror = function () {
+              URL.revokeObjectURL(url);
+              resolve(file);
+            };
+            img.src = url;
+          });
+        }
+
+        async function addFiles(files) {
+          clearAlert();
+          var list = Array.prototype.slice.call(files || []);
+          if (!list.length) return;
+          var remain = state.maxImages - state.images.size;
+          if (remain <= 0) {
+            showAlert("最多只能放 " + state.maxImages + " 张图片");
+            return;
+          }
+          if (list.length > remain) {
+            showAlert(
+              "最多只能放 " + state.maxImages + " 张图片，已自动取前 " + remain + " 张"
+            );
+            list = list.slice(0, remain);
+          }
+
+          // 先压缩（异步），全部就绪后再一次性插入，避免等待期间光标漂移
+          var prepared = [];
+          for (var i = 0; i < list.length; i++) {
+            var file = list[i];
+            if (!/^image\//.test(file.type)) {
+              showAlert("「" + (file.name || "文件") + "」不是图片，已跳过");
+              continue;
+            }
+            var compressed = await compressImage(file);
+            if (compressed.size > state.maxImageMb * 1024 * 1024) {
+              showAlert(
+                "「" + (file.name || "图片") + "」超过 " + state.maxImageMb + "MB，已跳过"
+              );
+              continue;
+            }
+            prepared.push(compressed);
+          }
+          if (!prepared.length) return;
+
+          if (!editorEl.contains(document.activeElement)) placeCaretAtEnd();
+          prepared.forEach(function (blob) {
+            var item = {
+              id: ++seq,
+              file: blob,
+              url: URL.createObjectURL(blob),
+              size: blob.size,
+            };
+            state.images.set(item.id, item);
+            insertImageNode(item);
+          });
+          updateCounter();
+        }
+
+        function fileToBase64(file) {
+          return new Promise(function (resolve, reject) {
+            var reader = new FileReader();
+            reader.onload = function () {
+              var s = String(reader.result || "");
+              resolve(s.slice(s.indexOf(",") + 1));
+            };
+            reader.onerror = function () {
+              reject(new Error("读取图片失败"));
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+
+        // ---------- 提交 ----------
+        async function submit(e) {
+          e.preventDefault();
+          if (state.submitting) return;
+          clearAlert();
+
+          // 拆分编辑器内容：文字块与图片块按原顺序交替
+          var parts = editorRaw().split(/\u0000(\d+)\u0000/);
+          var blocks = [];
+          var usedIds = [];
+          for (var i = 0; i < parts.length; i++) {
+            if (i % 2 === 0) {
+              if (parts[i]) blocks.push({ type: "text", text: parts[i] });
+            } else {
+              var imgId = Number(parts[i]);
+              if (state.images.has(imgId)) {
+                blocks.push({ type: "image", id: imgId });
+                usedIds.push(imgId);
+              }
+            }
+          }
+
+          var textOnly = blocks
+            .filter(function (b) {
+              return b.type === "text";
+            })
+            .map(function (b) {
+              return b.text;
+            })
+            .join("")
+            .replace(/^\s+|\s+$/g, "");
+
+          if (!textOnly && !usedIds.length) {
+            showAlert("先写两句问题描述，或者贴一张截图");
+            editorEl.focus();
+            return;
+          }
+          if (textOnly.length > MAX_TEXT) {
+            showAlert("问题描述超过 " + MAX_TEXT + " 字，请精简一下");
+            return;
+          }
+
+          var occurred = $("occurred").value;
+          var payload = {
+            token: state.token,
+            type: state.type,
+            content: blocks,
+            steps: $("steps").value.trim(),
+            contact: $("contact").value.trim(),
+            occurred_at: occurred ? new Date(occurred).getTime() : 0,
+            images: [],
+          };
+
+          var btn = $("submit-btn");
+          state.submitting = true;
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner"></span>正在提交…';
+
+          try {
+            for (var j = 0; j < usedIds.length; j++) {
+              var item = state.images.get(usedIds[j]);
+              if (!item) continue;
+              payload.images.push({
+                id: item.id,
+                mime: item.file.type || "image/jpeg",
+                data: await fileToBase64(item.file),
+              });
+            }
+
+            var resp = await fetch(API_BASE + "submit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            var data = await resp.json().catch(function () {
+              return {};
+            });
+            if (!resp.ok || !data || data.ok !== true) {
+              var msg = (data && (data.message || data.error)) || "提交失败（HTTP " + resp.status + "）";
+              throw new Error(msg);
+            }
+
+            $("ticket-id").textContent = "#" + data.id;
+            $("done-desc").textContent = payload.contact
+              ? "处理完成后，我们会通过你留下的联系方式通知你。"
+              : "处理完成后，结果会发布在群里，记得留意。";
+            showView("view-done");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          } catch (err) {
+            showAlert((err && err.message) || "提交失败，请稍后重试");
+          } finally {
+            state.submitting = false;
+            btn.disabled = false;
+            btn.textContent = "提交反馈";
+          }
+        }
+
+        function resetForm() {
+          $("form").reset();
+          state.images.forEach(function (x) {
+            URL.revokeObjectURL(x.url);
+          });
+          state.images.clear();
+          if (editorEl) editorEl.innerHTML = "";
+          state.type = "bug";
+          document.querySelectorAll(".seg").forEach(function (s) {
+            s.classList.toggle("active", s.dataset.type === "bug");
+          });
+          updateCounter();
+          clearAlert();
+          setNow();
+          showView("view-form");
+        }
+
+        // ---------- 初始化 ----------
+        async function init() {
+          state.token = tokenFromUrl();
+
+          try {
+            var resp = await fetch(API_BASE + "meta?t=" + encodeURIComponent(state.token));
+            var data = await resp.json().catch(function () {
+              return {};
+            });
+            if (!resp.ok || !data || data.ok !== true) {
+              throw new Error((data && data.message) || "链接无效");
+            }
+            state.maxImages = data.max_images || 6;
+            state.maxImageMb = data.max_image_mb || 5;
+            $("ed-tip").textContent =
+              "最多 " + state.maxImages + " 张，单张不超过 " + state.maxImageMb + "MB";
+            $("footer").textContent = data.footer || "";
+          } catch (err) {
+            $("invalid-desc").textContent =
+              (err && err.message) || "请回到 QQ 群发送「/反馈」获取新的反馈地址。";
+            showView("view-invalid");
+            return;
+          }
+
+          editorEl = $("editor");
+          setNow();
+          updateCounter();
+          showView("view-form");
+
+          // 事件绑定
+          $("type-group").addEventListener("click", function (e) {
+            var seg = e.target.closest(".seg");
+            if (!seg) return;
+            state.type = seg.dataset.type;
+            document.querySelectorAll(".seg").forEach(function (s) {
+              s.classList.toggle("active", s === seg);
+            });
+          });
+
+          editorEl.addEventListener("input", updateCounter);
+          $("now-btn").addEventListener("click", setNow);
+          $("form").addEventListener("submit", submit);
+          $("again-btn").addEventListener("click", resetForm);
+
+          $("lightbox").addEventListener("click", closeLightbox);
+          document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") closeLightbox();
+          });
+
+          // 粘贴：有图片就插到光标处，纯文字则去掉外部富文本格式
+          editorEl.addEventListener("paste", function (e) {
+            var dt = e.clipboardData;
+            if (!dt) return;
+            var files = [];
+            for (var i = 0; i < dt.items.length; i++) {
+              var it = dt.items[i];
+              if (it.kind === "file" && /^image\//.test(it.type)) {
+                var f = it.getAsFile();
+                if (f) files.push(f);
+              }
+            }
+            if (files.length) {
+              e.preventDefault();
+              addFiles(files);
+              return;
+            }
+            var text = dt.getData("text/plain");
+            if (text) {
+              e.preventDefault();
+              document.execCommand("insertText", false, text);
+            }
+          });
+
+          // 拖拽图片进编辑器，落点即插入位置
+          editorEl.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            editorEl.classList.add("over");
+          });
+          editorEl.addEventListener("dragleave", function () {
+            editorEl.classList.remove("over");
+          });
+          editorEl.addEventListener("drop", function (e) {
+            e.preventDefault();
+            editorEl.classList.remove("over");
+            var files = e.dataTransfer && e.dataTransfer.files;
+            if (!files || !files.length) return;
+
+            var range = null;
+            if (document.caretRangeFromPoint) {
+              range = document.caretRangeFromPoint(e.clientX, e.clientY);
+            } else if (document.caretPositionFromPoint) {
+              var pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+              if (pos) {
+                range = document.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+                range.collapse(true);
+              }
+            }
+            if (range && editorEl.contains(range.commonAncestorContainer)) {
+              var sel = window.getSelection();
+              sel.removeAllRanges();
+              sel.addRange(range);
+            } else {
+              placeCaretAtEnd();
+            }
+            addFiles(files);
+          });
+
+          // 按下时阻止按钮抢焦点，保住编辑器里的光标位置
+          $("pick-btn").addEventListener("mousedown", function (e) {
+            e.preventDefault();
+          });
+          $("pick-btn").addEventListener("click", function () {
+            if (state.images.size >= state.maxImages) {
+              showAlert("最多只能放 " + state.maxImages + " 张图片");
+              return;
+            }
+            $("file-input").click();
+          });
+          $("file-input").addEventListener("change", function (e) {
+            addFiles(e.target.files);
+            e.target.value = "";
+          });
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>

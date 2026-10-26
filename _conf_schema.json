@@ -113,5 +113,52 @@
                 "hint": "开启后待办完成并回复报告人即自动从列表删除（不再保留已完成记录）；关闭则保留，可手动清理（/删除待办 已完成）。"
             }
         }
+    },
+    "feedback_web": {
+        "description": "网页反馈",
+        "type": "object",
+        "hint": "给群友一个免登录的 H5 反馈页，可填文字、传截图、选发生时间，提交后直接进入反馈待办。群友发送 /反馈 即可拿到地址。",
+        "items": {
+            "web_enabled": {
+                "description": "启用网页反馈",
+                "type": "bool",
+                "default": true,
+                "hint": "关闭后反馈页返回 404，/反馈 指令也会提示未启用。"
+            },
+            "web_base_url": {
+                "description": "反馈页对外地址",
+                "type": "string",
+                "default": "",
+                "hint": "群友能访问到的地址前缀，如 https://bot.example.com:6185 或 http://1.2.3.4:6185（不带结尾斜杠）。留空则按面板配置的 host:port 推断，推断结果是 127.0.0.1 时群友无法访问，建议显式填写。"
+            },
+            "web_require_token": {
+                "description": "链接需要访问令牌",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后只有带 ?t=令牌 的链接能打开页面，避免地址被随意传播。可用 /反馈链接 重置 使旧链接失效。"
+            },
+            "web_max_images": {
+                "description": "单次最多上传图片数",
+                "type": "int",
+                "default": 6,
+                "minimum": 1,
+                "maximum": 8,
+                "hint": "反馈表单允许上传的图片张数上限（浏览器端会先压缩到长边 1600px）。"
+            },
+            "web_max_image_mb": {
+                "description": "单张图片大小上限（MB）",
+                "type": "int",
+                "default": 5,
+                "minimum": 1,
+                "maximum": 20,
+                "hint": "超过该体积的图片会被拒绝，建议保持默认。"
+            },
+            "web_notify_admins": {
+                "description": "收到反馈时私聊提醒管理员",
+                "type": "bool",
+                "default": true,
+                "hint": "有人提交网页反馈后，私聊通知「允许添加待办的QQ号」列表中的管理员（最多前 3 个）。"
+            }
+        }
     }
 }

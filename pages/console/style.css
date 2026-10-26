@@ -330,6 +330,25 @@ pre.context {
   overflow: auto;
 }
 
+/* 问题描述图文流里的图片占位（点击展开附图区） */
+.img-chip {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 1px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.img-chip:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
 .img-links {
   font-size: 12px;
   word-break: break-all;
